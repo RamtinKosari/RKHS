@@ -17,12 +17,14 @@ import {
   FileCode,
   FileSpreadsheet,
   FileImage,
+  FileVideo,
   CheckCircle2,
   Laptop,
   Wifi,
   Loader2
 } from "lucide-react"
 import { Label, Pie, PieChart, Sector } from "recharts"
+import { QRCodeSVG } from "qrcode.react"
 
 import { PieSectorDataItem } from "recharts/types/polar/Pie"
 
@@ -60,7 +62,7 @@ interface FileItem {
   name: string
   size: string
   sizeBytes?: number
-  type: "pdf" | "code" | "spreadsheet" | "image"
+  type: "pdf" | "code" | "spreadsheet" | "image" | "video"
   uploader: string
   updatedAt: string
 }
@@ -90,6 +92,10 @@ const chartConfig = {
     label: "Images",
     color: "#d4d4d8",
   },
+  video: {
+    label: "Videos",
+    color: "#52525b",
+  },
 } satisfies ChartConfig
 
 export default function FileManagerContent() {
@@ -104,8 +110,13 @@ export default function FileManagerContent() {
 
   // Interactive Pie Chart State
   const id = "pie-interactive-file-types"
-  const types = ["pdf", "code", "spreadsheet", "image"]
+  const types = ["pdf", "code", "spreadsheet", "image", "video"]
   const [activeType, setActiveType] = useState<string>("pdf")
+
+  // Temp Clipboard Text Share States
+  const [sharedText, setSharedText] = useState("")
+  const [isSavingText, setIsSavingText] = useState(false)
+  const [textCopied, setTextCopied] = useState(false)
 
   // Helper to parse bytes safely from backend response
   const getFileSizeBytes = (f: FileItem) => {
@@ -120,7 +131,7 @@ export default function FileManagerContent() {
     return val // bytes
   }
 
-  // Fetch files from Flask backend on load
+  // Fetch files and shared text from Flask backend on load
   const fetchFiles = async () => {
     try {
       setIsLoading(true)
@@ -137,9 +148,41 @@ export default function FileManagerContent() {
     }
   }
 
+  const fetchSharedText = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/text`)
+      const data = await res.json()
+      if (data.text) setSharedText(data.text)
+    } catch (err) {
+      console.error("Failed to load shared text:", err)
+    }
+  }
+
   useEffect(() => {
     fetchFiles()
+    fetchSharedText()
   }, [])
+
+  const handleSaveText = async () => {
+    setIsSavingText(true)
+    try {
+      await fetch(`${API_BASE}/text`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: sharedText }),
+      })
+    } catch (err) {
+      console.error("Failed to save text:", err)
+    } finally {
+      setIsSavingText(false)
+    }
+  }
+
+  const handleCopyText = () => {
+    navigator.clipboard.writeText(sharedText)
+    setTextCopied(true)
+    setTimeout(() => setTextCopied(false), 2000)
+  }
 
   // Reset or adjust aspect ratio when selected file changes
   useEffect(() => {
@@ -150,7 +193,7 @@ export default function FileManagerContent() {
 
   // Calculate dynamic count data for Pie Chart 1
   const countData = useMemo(() => {
-    const counts: Record<string, number> = { pdf: 0, code: 0, spreadsheet: 0, image: 0 }
+    const counts: Record<string, number> = { pdf: 0, code: 0, spreadsheet: 0, image: 0, video: 0 }
     files.forEach(f => {
       if (counts[f.type] !== undefined) counts[f.type]++
     })
@@ -163,7 +206,7 @@ export default function FileManagerContent() {
 
   // Calculate dynamic size data (in MB) for Pie Chart 2
   const sizeData = useMemo(() => {
-    const sizes: Record<string, number> = { pdf: 0, code: 0, spreadsheet: 0, image: 0 }
+    const sizes: Record<string, number> = { pdf: 0, code: 0, spreadsheet: 0, image: 0, video: 0 }
     files.forEach(f => {
       if (sizes[f.type] !== undefined) {
         sizes[f.type] += getFileSizeBytes(f) / (1024 * 1024)
@@ -246,6 +289,7 @@ export default function FileManagerContent() {
       case "code": return <FileCode className="w-4 h-4 text-zinc-900 dark:text-zinc-100" />
       case "spreadsheet": return <FileSpreadsheet className="w-4 h-4 text-zinc-900 dark:text-zinc-100" />
       case "image": return <FileImage className="w-4 h-4 text-zinc-900 dark:text-zinc-100" />
+      case "video": return <FileVideo className="w-4 h-4 text-zinc-900 dark:text-zinc-100" />
       default: return <File className="w-4 h-4 text-zinc-900 dark:text-zinc-100" />
     }
   }
@@ -483,6 +527,68 @@ export default function FileManagerContent() {
 
         </div>
 
+        {/* Cross-Device Temp Clipboard & Larger Dynamic QR Code Section */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-stretch">
+          
+          {/* Left Textarea Card (Spans 2 columns, matched height) */}
+          <Card className="border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 lg:col-span-2 flex flex-col justify-between p-6">
+            <CardHeader className="p-0 pb-3 flex flex-row items-center justify-between">
+              <CardTitle className="text-sm font-medium text-zinc-500 dark:text-zinc-400">
+                Cross-Device Temp Clipboard
+              </CardTitle>
+              <div className="flex gap-2">
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  onClick={handleCopyText}
+                  className="text-xs h-7 border-zinc-200 dark:border-zinc-800"
+                >
+                  {textCopied ? "Copied!" : "Copy Text"}
+                </Button>
+                <Button 
+                  size="sm" 
+                  onClick={handleSaveText}
+                  disabled={isSavingText}
+                  className="text-xs h-7 bg-zinc-900 text-zinc-50 hover:bg-zinc-800 dark:bg-zinc-50 dark:text-zinc-900"
+                >
+                  {isSavingText ? <Loader2 className="w-3 h-3 animate-spin mr-1" /> : null}
+                  Save to Server
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="p-0 flex-1 flex flex-col">
+              <textarea
+                value={sharedText}
+                onChange={(e) => setSharedText(e.target.value)}
+                placeholder="Paste links, snippets, code, or notes here... Open your IP on another computer to view and copy them instantly."
+                className="w-full flex-1 min-h-[140px] p-3 text-xs font-mono bg-zinc-50 dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-md focus:outline-none focus:ring-1 focus:ring-zinc-400 text-zinc-900 dark:text-zinc-100 resize-none"
+              />
+            </CardContent>
+          </Card>
+
+          {/* Right Larger Instant QR Code Card */}
+          <Card className="border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 flex flex-col items-center justify-between p-6">
+            <CardHeader className="p-0 pb-3 w-full">
+              <CardTitle className="text-sm font-medium text-zinc-500 dark:text-zinc-400 text-center">
+                Instant QR Code
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="p-0 flex flex-col items-center justify-center flex-1">
+              {sharedText ? (
+                <div className="bg-white p-3.5 rounded-lg border border-zinc-200 shadow-xs">
+                  <QRCodeSVG value={sharedText} size={140} level="M" />
+                </div>
+              ) : (
+                <div className="w-[140px] h-[140px] bg-zinc-50 dark:bg-zinc-950 border border-dashed border-zinc-200 dark:border-zinc-800 rounded-lg flex items-center justify-center text-[10px] text-zinc-400 text-center p-2">
+                  Type text to generate QR
+                </div>
+              )}
+              <span className="text-[10px] text-zinc-400 mt-2.5 text-center">Scan with phone camera</span>
+            </CardContent>
+          </Card>
+
+        </div>
+
         {/* Main Section: Table on Left & Preview Card on Right */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
           
@@ -590,6 +696,18 @@ export default function FileManagerContent() {
                           }
                         }}
                       />
+                    ) : selectedFile.type === "video" ? (
+                      <video 
+                        src={`${API_BASE}/download/${selectedFile.name}`} 
+                        controls
+                        className="w-full h-full object-contain bg-black"
+                        onLoadedMetadata={(e) => {
+                          const vid = e.currentTarget
+                          if (vid.videoWidth && vid.videoHeight) {
+                            setAspectRatio(vid.videoWidth / vid.videoHeight)
+                          }
+                        }}
+                      />
                     ) : selectedFile.type === "pdf" ? (
                       <div className="w-full h-full flex items-center justify-center bg-white dark:bg-zinc-900 overflow-hidden [&_canvas]:max-w-full [&_canvas]:max-h-full [&_canvas]:w-full [&_canvas]:h-auto">
                         <Document
@@ -661,7 +779,8 @@ export default function FileManagerContent() {
                     </div>
                   </div>
 
-                  <div className="flex gap-2 pt-2">
+                  {/* Perfectly Aligned 2-Column Grid Action Buttons */}
+                  <div className="grid grid-cols-2 gap-2 pt-2">
                     <Button onClick={() => handleDownload(selectedFile.name)} variant="outline" size="sm" className="w-full text-xs h-8 border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800">
                       <Download className="w-3 h-3 mr-1.5" /> Download
                     </Button>
