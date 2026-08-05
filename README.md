@@ -1,2 +1,64 @@
-# RKHS
-Ramtin Kosari Home Server
+# RKHS Local Storage & File Manager
+
+A lightweight full-stack local network file management system. Run it on an Ubuntu server and manage files from any laptop, phone, or tablet connected to the same Wi-Fi or Ethernet network.
+
+## Quick Start
+
+### 1. Start the Backend
+
+```bash
+cd Backend
+python3 app.py
+```
+
+The backend runs on `http://0.0.0.0:5000`.
+
+### 2. Start the Frontend
+
+```bash
+cd Frontend
+npm install
+npm run dev -- -H 0.0.0.0 -p 3000
+```
+
+The frontend runs on `http://0.0.0.0:3000`.
+
+### 3. Access from Other Devices
+
+Find your server IP:
+
+```bash
+ip a
+```
+
+Then open the frontend in a browser from any device on the same network:
+
+```
+http://<SERVER_IP>:3000
+```
+
+## Project Structure
+
+```
+.
+├── Backend/   # Python Flask API + local filesystem storage
+└── Frontend/  # Next.js web interface
+```
+
+## Features
+
+- Local network access from any device
+- Upload, download, delete, and browse files
+- Search and filter files
+- PDF and image previews
+- Live storage analytics dashboard
+- Shared text scratchpad
+
+## Notes
+
+- This project is intended for **trusted local networks**.
+- For public internet deployment, add authentication, HTTPS, firewall rules, and a reverse proxy.
+
+## License
+
+MIT License — Copyright (c) 2026 Ramtin Kosari.
