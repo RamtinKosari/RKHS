@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="Assets/1.png" alt="RKHS Local Storage & File Manager" />
+</p>
+
 # RKHS Local Storage & File Manager
 
 A lightweight full-stack local network file management system. Run it on an Ubuntu server and manage files from any laptop, phone, or tablet connected to the same Wi-Fi or Ethernet network.
