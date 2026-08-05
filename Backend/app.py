@@ -44,6 +44,8 @@ def get_files():
         return jsonify(files_list)
 
     for idx, filename in enumerate(os.listdir(UPLOAD_FOLDER)):
+        if filename == ".temp_shared_text.txt":
+            continue
         file_path = os.path.join(UPLOAD_FOLDER, filename)
         if os.path.isfile(file_path):
             stat = os.stat(file_path)
