@@ -1,7 +1,7 @@
-import type { NextConfig } from "next";
+// next.config.js
+/** @type {import('next').Next.js} */
+const nextConfig = {
+  allowedDevOrigins: ['192.168.1.103', 'localhost:3000'],
+}
 
-const nextConfig: NextConfig = {
-  /* config options here */
-};
-
-export default nextConfig;
+module.exports = nextConfig
