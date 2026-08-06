@@ -24,7 +24,12 @@ import {
   Wifi,
   Loader2
 } from "lucide-react"
-import { Label, Pie, PieChart, Sector } from "recharts"
+import { Label, Pie as RechartsPie, PieChart, Sector } from "recharts"
+
+// Recharts v3 removed activeIndex/activeShape from the TypeScript typings,
+// but the runtime still supports them. Cast so the build passes.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+const Pie = RechartsPie as any
 import { QRCodeSVG } from "qrcode.react"
 
 import { PieSectorDataItem } from "recharts/types/polar/Pie"
@@ -93,7 +98,7 @@ export default function FileManagerContent() {
   const [isLoadingCode, setIsLoadingCode] = useState<boolean>(false)
 
   const id = "pie-interactive-file-types"
-  const types = ["pdf", "code", "spreadsheet", "image", "video", "audio"]
+  const types = useMemo(() => ["pdf", "code", "spreadsheet", "image", "video", "audio"], [])
   const [activeType, setActiveType] = useState<string>("pdf")
 
   const [sharedText, setSharedText] = useState("")
@@ -128,35 +133,63 @@ export default function FileManagerContent() {
     }
   }
 
-  const fetchSharedText = async () => {
-    try {
-      const res = await fetch(`${API_BASE}/text`)
-      const data = await res.json()
-      if (data.text) setSharedText(data.text)
-    } catch (err) {
-      console.error("Failed to load shared text:", err)
-    }
-  }
 
   useEffect(() => {
-    fetchFiles()
-    fetchSharedText()
+    let cancelled = false
+
+    const loadFiles = async () => {
+      try {
+        setIsLoading(true)
+        const res = await fetch(`${API_BASE}/files`)
+        const data = await res.json()
+        if (cancelled) return
+        setFiles(data)
+        if (data.length > 0 && !selectedFile) {
+          setSelectedFile(data[0])
+        }
+      } catch (err) {
+        console.error("Failed to connect to Flask backend:", err)
+      } finally {
+        if (!cancelled) setIsLoading(false)
+      }
+    }
+
+    const loadText = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/text`)
+        const data = await res.json()
+        if (!cancelled && data.text) setSharedText(data.text)
+      } catch (err) {
+        console.error("Failed to load shared text:", err)
+      }
+    }
+
+    loadFiles()
+    loadText()
+
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
-    if (selectedFile?.type === "code") {
+    if (selectedFile?.type !== "code") return
+    let cancelled = false
+
+    const loadCode = async () => {
       setIsLoadingCode(true)
-      fetch(`${API_BASE}/content/${selectedFile.name}`)
-        .then(res => res.json())
-        .then(data => {
-          setCodeContent(data.content || "")
-          setIsLoadingCode(false)
-        })
-        .catch(() => {
-          setCodeContent("Error loading code preview.")
-          setIsLoadingCode(false)
-        })
+      try {
+        const res = await fetch(`${API_BASE}/content/${selectedFile.name}`)
+        const data = await res.json()
+        if (!cancelled) setCodeContent(data.content || "")
+      } catch {
+        if (!cancelled) setCodeContent("Error loading code preview.")
+      } finally {
+        if (!cancelled) setIsLoadingCode(false)
+      }
     }
+
+    loadCode()
+    return () => { cancelled = true }
   }, [selectedFile])
 
   const handleSaveText = async () => {
@@ -180,11 +213,6 @@ export default function FileManagerContent() {
     setTimeout(() => setTextCopied(false), 2000)
   }
 
-  useEffect(() => {
-    if (selectedFile?.type === "code" || selectedFile?.type === "spreadsheet" || selectedFile?.type === "audio") {
-      setAspectRatio(4 / 3) 
-    }
-  }, [selectedFile])
 
   const countData = useMemo(() => {
     const counts: Record<string, number> = { pdf: 0, code: 0, spreadsheet: 0, image: 0, video: 0, audio: 0 }
@@ -196,7 +224,7 @@ export default function FileManagerContent() {
       value: counts[t],
       fill: `var(--color-${t})`
     }))
-  }, [files])
+  }, [files, types])
 
   const sizeData = useMemo(() => {
     const sizes: Record<string, number> = { pdf: 0, code: 0, spreadsheet: 0, image: 0, video: 0, audio: 0 }
@@ -210,7 +238,7 @@ export default function FileManagerContent() {
       value: Number(sizes[t].toFixed(2)),
       fill: `var(--color-${t})`
     }))
-  }, [files])
+  }, [files, types])
 
   const activeIndex = useMemo(
     () => countData.findIndex((item) => item.type === activeType),
@@ -323,6 +351,11 @@ export default function FileManagerContent() {
   const limitGB = 100
   const limitMB = limitGB * 1024
   const usagePercentage = Math.min((totalSizeMB / limitMB) * 100, 100)
+
+  const previewAspectRatio =
+    selectedFile?.type === "code" || selectedFile?.type === "spreadsheet" || selectedFile?.type === "audio"
+      ? 4 / 3
+      : aspectRatio
 
   return (
     <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-50 p-6 md:p-10">
@@ -690,7 +723,7 @@ export default function FileManagerContent() {
                 <>
                   <div 
                     className="w-full bg-zinc-50 dark:bg-zinc-950 rounded-lg border border-zinc-200 dark:border-zinc-800 flex flex-col items-center justify-center overflow-hidden relative transition-all duration-300"
-                    style={{ aspectRatio: `${aspectRatio}` }}
+                    style={{ aspectRatio: `${previewAspectRatio}` }}
                   >
                     {selectedFile.type === "image" ? (
                       <img 
