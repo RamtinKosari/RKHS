@@ -916,7 +916,7 @@ export default function FileManagerContent() {
           <div>
             <h1 className="text-3xl font-bold tracking-tight">Ubuntu Local Storage</h1>
             <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-1">
-              Connected live to your Flask backend server (`/uploads`).
+              RKHS is Connected, Enjoy :D
             </p>
           </div>
           <div className="flex items-center gap-3">
