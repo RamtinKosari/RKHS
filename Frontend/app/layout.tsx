@@ -9,7 +9,7 @@ const inter = Inter({
 });
 
 export const metadata: Metadata = {
-  title: "Ubuntu Local File Manager",
+  title: "RKHS",
   description: "Local network file sharing dashboard",
 };
 
