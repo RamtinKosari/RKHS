@@ -41,6 +41,12 @@ Then open the frontend in a browser from any device on the same network:
 http://<SERVER_IP>:3000
 ```
 
+## Demo
+
+<p align="center">
+  <video src="Assets/2.mp4" controls width="80%"></video>
+</p>
+
 ## Project Structure
 
 ```
