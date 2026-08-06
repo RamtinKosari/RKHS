@@ -42,10 +42,7 @@ http://<SERVER_IP>:3000
 ```
 
 ## Demo
-
-<p align="center">
-  <video src="Assets/2.mp4" controls width="80%"></video>
-</p>
+https://github.com/user-attachments/assets/62401ad1-0de1-4a1b-9dd7-237d0a436469
 
 ## Project Structure
 
