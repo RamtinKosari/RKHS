@@ -18,7 +18,7 @@ def get_file_type(filename):
     ext = filename.rsplit(".", 1)[1].lower() if "." in filename else ""
     if ext in ["pdf", "txt", "docx", "md"]:
         return "pdf"
-    elif ext in ["py", "js", "ts", "cpp", "h", "json"]:
+    elif ext in ["py", "js", "ts", "cpp", "h", "json", "yml", "yaml", "sh", "css", "html", "tsx"]:
         return "code"
     elif ext in ["csv", "xlsx", "xls"]:
         return "spreadsheet"
@@ -26,6 +26,8 @@ def get_file_type(filename):
         return "image"
     elif ext in ["mp4", "webm", "ogg", "mov"]:
         return "video"
+    elif ext in ["mp3", "wav", "m4a", "aac"]:
+        return "audio"
     return "pdf"
 
 # Helper to format file size nicely
@@ -101,6 +103,18 @@ def save_shared_text():
     with open(TEMP_TEXT_FILE, "w", encoding="utf-8") as f:
         f.write(text_content)
     return jsonify({"status": "success"})
+
+@app.route("/api/content/<filename>", methods=["GET"])
+def get_file_content(filename):
+    file_path = os.path.join(UPLOAD_FOLDER, secure_filename(filename))
+    if os.path.exists(file_path) and os.path.isfile(file_path):
+        try:
+            with open(file_path, "r", encoding="utf-8") as f:
+                content = f.read()
+            return jsonify({"content": content})
+        except Exception:
+            return jsonify({"content": "Binary or unreadable file text format."})
+    return jsonify({"error": "File not found"}), 404
 
 if __name__ == "__main__":
     # Runs publicly on your network so your laptop/clients can reach it

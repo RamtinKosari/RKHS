@@ -18,6 +18,7 @@ import {
   FileSpreadsheet,
   FileImage,
   FileVideo,
+  Music,
   CheckCircle2,
   Laptop,
   Wifi,
@@ -51,7 +52,6 @@ import {
   ChartTooltipContent,
 } from "@/components/ui/chart"
 
-// Configure PDF.js worker safely using local package import URL to prevent mismatch and fetch failures
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
   'pdfjs-dist/build/pdf.worker.min.mjs',
   import.meta.url,
@@ -62,63 +62,44 @@ interface FileItem {
   name: string
   size: string
   sizeBytes?: number
-  type: "pdf" | "code" | "spreadsheet" | "image" | "video"
+  type: "pdf" | "code" | "spreadsheet" | "image" | "video" | "audio"
   uploader: string
   updatedAt: string
 }
 
-// Dynamically use the current host so it works seamlessly on local network (e.g. phones/other laptops)
 const API_BASE = typeof window !== "undefined" 
   ? `http://${window.location.hostname}:5000/api` 
   : "http://localhost:5000/api"
 
 const chartConfig = {
-  value: {
-    label: "Metric",
-  },
-  pdf: {
-    label: "Documents",
-    color: "#71717a",
-  },
-  code: {
-    label: "Code",
-    color: "#27272a",
-  },
-  spreadsheet: {
-    label: "Spreadsheets",
-    color: "#a1a1aa",
-  },
-  image: {
-    label: "Images",
-    color: "#d4d4d8",
-  },
-  video: {
-    label: "Videos",
-    color: "#52525b",
-  },
+  value: { label: "Metric" },
+  pdf: { label: "Documents", color: "#71717a" },
+  code: { label: "Code", color: "#27272a" },
+  spreadsheet: { label: "Spreadsheets", color: "#a1a1aa" },
+  image: { label: "Images", color: "#d4d4d8" },
+  video: { label: "Videos", color: "#52525b" },
+  audio: { label: "Audio", color: "#3f3f46" },
 } satisfies ChartConfig
 
 export default function FileManagerContent() {
   const [files, setFiles] = useState<FileItem[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState("")
-  
   const [selectedFile, setSelectedFile] = useState<FileItem | null>(null)
-  
-  // Aspect ratio state for dynamic preview box sizing (width / height)
   const [aspectRatio, setAspectRatio] = useState<number>(16 / 9)
+  
+  // Code content preview state
+  const [codeContent, setCodeContent] = useState<string>("")
+  const [isLoadingCode, setIsLoadingCode] = useState<boolean>(false)
 
-  // Interactive Pie Chart State
   const id = "pie-interactive-file-types"
-  const types = ["pdf", "code", "spreadsheet", "image", "video"]
+  const types = ["pdf", "code", "spreadsheet", "image", "video", "audio"]
   const [activeType, setActiveType] = useState<string>("pdf")
 
-  // Temp Clipboard Text Share States
   const [sharedText, setSharedText] = useState("")
   const [isSavingText, setIsSavingText] = useState(false)
   const [textCopied, setTextCopied] = useState(false)
 
-  // Helper to parse bytes safely from backend response
   const getFileSizeBytes = (f: FileItem) => {
     if (f.sizeBytes && f.sizeBytes > 0) return f.sizeBytes
     if (!f.size) return 0
@@ -128,10 +109,9 @@ export default function FileManagerContent() {
     if (unit.includes("GB")) return val * 1024 * 1024 * 1024
     if (unit.includes("MB")) return val * 1024 * 1024
     if (unit.includes("KB")) return val * 1024
-    return val // bytes
+    return val 
   }
 
-  // Fetch files and shared text from Flask backend on load
   const fetchFiles = async () => {
     try {
       setIsLoading(true)
@@ -163,6 +143,22 @@ export default function FileManagerContent() {
     fetchSharedText()
   }, [])
 
+  useEffect(() => {
+    if (selectedFile?.type === "code") {
+      setIsLoadingCode(true)
+      fetch(`${API_BASE}/content/${selectedFile.name}`)
+        .then(res => res.json())
+        .then(data => {
+          setCodeContent(data.content || "")
+          setIsLoadingCode(false)
+        })
+        .catch(() => {
+          setCodeContent("Error loading code preview.")
+          setIsLoadingCode(false)
+        })
+    }
+  }, [selectedFile])
+
   const handleSaveText = async () => {
     setIsSavingText(true)
     try {
@@ -184,16 +180,14 @@ export default function FileManagerContent() {
     setTimeout(() => setTextCopied(false), 2000)
   }
 
-  // Reset or adjust aspect ratio when selected file changes
   useEffect(() => {
-    if (selectedFile?.type === "code" || selectedFile?.type === "spreadsheet") {
-      setAspectRatio(4 / 3) // Standard default box for non-visual files
+    if (selectedFile?.type === "code" || selectedFile?.type === "spreadsheet" || selectedFile?.type === "audio") {
+      setAspectRatio(4 / 3) 
     }
   }, [selectedFile])
 
-  // Calculate dynamic count data for Pie Chart 1
   const countData = useMemo(() => {
-    const counts: Record<string, number> = { pdf: 0, code: 0, spreadsheet: 0, image: 0, video: 0 }
+    const counts: Record<string, number> = { pdf: 0, code: 0, spreadsheet: 0, image: 0, video: 0, audio: 0 }
     files.forEach(f => {
       if (counts[f.type] !== undefined) counts[f.type]++
     })
@@ -204,9 +198,8 @@ export default function FileManagerContent() {
     }))
   }, [files])
 
-  // Calculate dynamic size data (in MB) for Pie Chart 2
   const sizeData = useMemo(() => {
-    const sizes: Record<string, number> = { pdf: 0, code: 0, spreadsheet: 0, image: 0, video: 0 }
+    const sizes: Record<string, number> = { pdf: 0, code: 0, spreadsheet: 0, image: 0, video: 0, audio: 0 }
     files.forEach(f => {
       if (sizes[f.type] !== undefined) {
         sizes[f.type] += getFileSizeBytes(f) / (1024 * 1024)
@@ -224,7 +217,6 @@ export default function FileManagerContent() {
     [activeType, countData]
   )
 
-  // Upload Dialog States
   const [isUploadOpen, setIsUploadOpen] = useState(false)
   const [selectedUploadFile, setSelectedUploadFile] = useState<File | null>(null)
   const [isUploading, setIsUploading] = useState(false)
@@ -290,11 +282,42 @@ export default function FileManagerContent() {
       case "spreadsheet": return <FileSpreadsheet className="w-4 h-4 text-zinc-900 dark:text-zinc-100" />
       case "image": return <FileImage className="w-4 h-4 text-zinc-900 dark:text-zinc-100" />
       case "video": return <FileVideo className="w-4 h-4 text-zinc-900 dark:text-zinc-100" />
+      case "audio": return <Music className="w-4 h-4 text-zinc-900 dark:text-zinc-100" />
       default: return <File className="w-4 h-4 text-zinc-900 dark:text-zinc-100" />
     }
   }
 
-  // Total server storage calculation
+  // Colorful syntax highlighter helper for first 20 lines (non-scrollable)
+  const renderHighlightedCode = (code: string) => {
+    const lines = code.split("\n").slice(0, 20)
+    return lines.map((line, lineIdx) => {
+      const parts = line.split(/(\s+|[()[\]{},:;=+\-*/<>!&|.%]+|["'].*?["']|#.*|\/\/.*)/g)
+      return (
+        <div key={lineIdx} className="table-row font-mono text-[10px] leading-tight">
+          <span className="table-cell text-right pr-2 select-none text-zinc-600 dark:text-zinc-700 w-5">{lineIdx + 1}</span>
+          <span className="table-cell whitespace-pre">
+            {parts.map((part, i) => {
+              if (!part) return null
+              if (part.startsWith("#") || part.startsWith("//")) {
+                return <span key={i} className="text-zinc-500 italic">{part}</span>
+              }
+              if ((part.startsWith('"') && part.endsWith('"')) || (part.startsWith("'") && part.endsWith("'"))) {
+                return <span key={i} className="text-emerald-400">{part}</span>
+              }
+              if (/^(import|from|def|class|return|const|let|var|function|if|else|for|while|try|except|async|await|true|false|None|null|undefined)$/.test(part.trim())) {
+                return <span key={i} className="text-purple-400 font-semibold">{part}</span>
+              }
+              if (/^\d+(\.\d+)?$/.test(part.trim())) {
+                return <span key={i} className="text-amber-400">{part}</span>
+              }
+              return <span key={i} className="text-zinc-200">{part}</span>
+            })}
+          </span>
+        </div>
+      )
+    })
+  }
+
   const totalSizeBytes = files.reduce((acc, f) => acc + getFileSizeBytes(f), 0)
   const totalSizeMB = Number((totalSizeBytes / (1024 * 1024)).toFixed(1))
   const limitGB = 100
@@ -363,8 +386,6 @@ export default function FileManagerContent() {
 
         {/* Top 3-Card Grid Section */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-          
-          {/* Card 1: Storage Meter */}
           <Card className="border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 flex flex-col justify-between">
             <CardHeader className="flex flex-row items-center justify-between pb-2">
               <CardTitle className="text-sm font-medium text-zinc-500 dark:text-zinc-400">Total Storage Used</CardTitle>
@@ -381,7 +402,6 @@ export default function FileManagerContent() {
             </CardContent>
           </Card>
 
-          {/* Card 2: Connected Devices */}
           <Card className="border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 flex flex-col justify-between">
             <CardHeader className="flex flex-row items-center justify-between pb-2">
               <CardTitle className="text-sm font-medium text-zinc-500 dark:text-zinc-400">Active Network Peers</CardTitle>
@@ -405,7 +425,6 @@ export default function FileManagerContent() {
             </CardContent>
           </Card>
 
-          {/* Card 3: Dual Pie Charts (Count & Size) */}
           <Card className="border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 flex flex-col">
             <ChartStyle id={id} config={chartConfig} />
             <CardHeader className="flex flex-row items-center space-y-0 pb-1 justify-between">
@@ -436,8 +455,6 @@ export default function FileManagerContent() {
               </Select>
             </CardHeader>
             <CardContent className="flex flex-1 justify-between items-center pb-2 pt-0 gap-2">
-              
-              {/* Left Chart: File Count */}
               <div className="flex-1 text-center flex flex-col items-center">
                 <span className="text-[10px] font-medium text-zinc-400 uppercase tracking-wider block mb-1">Count</span>
                 <div className="w-full max-w-[110px] aspect-square">
@@ -478,10 +495,8 @@ export default function FileManagerContent() {
                 </div>
               </div>
 
-              {/* Separator Line */}
               <div className="h-20 w-[1px] bg-zinc-100 dark:bg-zinc-800 my-auto" />
 
-              {/* Right Chart: File Size */}
               <div className="flex-1 text-center flex flex-col items-center">
                 <span className="text-[10px] font-medium text-zinc-400 uppercase tracking-wider block mb-1">Size (MB)</span>
                 <div className="w-full max-w-[110px] aspect-square">
@@ -521,16 +536,12 @@ export default function FileManagerContent() {
                   </ChartContainer>
                 </div>
               </div>
-
             </CardContent>
           </Card>
-
         </div>
 
         {/* Cross-Device Temp Clipboard & Larger Dynamic QR Code Section */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-stretch">
-          
-          {/* Left Textarea Card (Spans 2 columns, matched height) */}
           <Card className="border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 lg:col-span-2 flex flex-col justify-between p-6">
             <CardHeader className="p-0 pb-3 flex flex-row items-center justify-between">
               <CardTitle className="text-sm font-medium text-zinc-500 dark:text-zinc-400">
@@ -566,7 +577,6 @@ export default function FileManagerContent() {
             </CardContent>
           </Card>
 
-          {/* Right Larger Instant QR Code Card */}
           <Card className="border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 flex flex-col items-center justify-between p-6">
             <CardHeader className="p-0 pb-3 w-full">
               <CardTitle className="text-sm font-medium text-zinc-500 dark:text-zinc-400 text-center">
@@ -586,13 +596,11 @@ export default function FileManagerContent() {
               <span className="text-[10px] text-zinc-400 mt-2.5 text-center">Scan with phone camera</span>
             </CardContent>
           </Card>
-
         </div>
 
         {/* Main Section: Table on Left & Preview Card on Right */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
           
-          {/* Left: Files Table (Spans 2 columns) */}
           <Card className="border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 lg:col-span-2">
             <CardHeader className="flex flex-row items-center justify-between pb-4">
               <CardTitle className="text-lg font-semibold">Files Directory</CardTitle>
@@ -701,13 +709,37 @@ export default function FileManagerContent() {
                         src={`${API_BASE}/download/${selectedFile.name}`} 
                         controls
                         className="w-full h-full object-contain bg-black"
-                        onLoadedMetadata={(e) => {
-                          const vid = e.currentTarget
-                          if (vid.videoWidth && vid.videoHeight) {
-                            setAspectRatio(vid.videoWidth / vid.videoHeight)
-                          }
-                        }}
                       />
+                    ) : selectedFile.type === "audio" ? (
+                      <div className="flex flex-col items-center justify-center p-6 w-full space-y-4">
+                        <div className="p-4 bg-zinc-200/50 dark:bg-zinc-800/50 rounded-full">
+                          <Music className="w-8 h-8 text-zinc-700 dark:text-zinc-300 animate-pulse" />
+                        </div>
+                        <span className="text-xs font-semibold text-zinc-800 dark:text-zinc-200 truncate max-w-[220px]">
+                          {selectedFile.name}
+                        </span>
+                        <audio 
+                          src={`${API_BASE}/download/${selectedFile.name}`} 
+                          controls 
+                          className="w-full max-w-[260px] h-10"
+                        />
+                      </div>
+                    ) : selectedFile.type === "code" ? (
+                      <div className="w-full h-full flex flex-col bg-zinc-950 text-zinc-50 font-mono text-[10px] overflow-hidden select-text">
+                        <div className="flex items-center justify-between px-3 py-1.5 bg-zinc-900 border-b border-zinc-800 text-zinc-400 text-[10px]">
+                          <span>{selectedFile.name}</span>
+                          <span className="text-[9px] bg-zinc-800 px-1.5 py-0.5 rounded text-zinc-300">First 20 Lines</span>
+                        </div>
+                        <div className="p-2 overflow-hidden flex-1">
+                          {isLoadingCode ? (
+                            <div className="flex items-center justify-center h-full text-zinc-500">
+                              <Loader2 className="w-4 h-4 animate-spin mr-2" /> Loading code...
+                            </div>
+                          ) : (
+                            renderHighlightedCode(codeContent)
+                          )}
+                        </div>
+                      </div>
                     ) : selectedFile.type === "pdf" ? (
                       <div className="w-full h-full flex items-center justify-center bg-white dark:bg-zinc-900 overflow-hidden [&_canvas]:max-w-full [&_canvas]:max-h-full [&_canvas]:w-full [&_canvas]:h-auto">
                         <Document
@@ -738,15 +770,15 @@ export default function FileManagerContent() {
                         </Document>
                       </div>
                     ) : (
-                      <div className="flex flex-col items-center justify-center p-4 text-center">
-                        <div className="p-3 bg-zinc-200/50 dark:bg-zinc-800/50 rounded-full mb-2">
+                      <div className="flex flex-col items-center justify-center p-6 text-center">
+                        <div className="p-4 bg-zinc-200/50 dark:bg-zinc-800/50 rounded-2xl mb-3 border border-zinc-300/40 dark:border-zinc-700/40 shadow-xs">
                           {getFileIcon(selectedFile.type)}
                         </div>
                         <span className="text-xs font-semibold text-zinc-800 dark:text-zinc-200 truncate max-w-[200px]">
                           {selectedFile.name}
                         </span>
-                        <span className="text-[10px] text-zinc-400 mt-0.5 uppercase tracking-wider">
-                          {selectedFile.type} format
+                        <span className="text-[10px] text-zinc-400 mt-1 uppercase tracking-wider bg-zinc-200/60 dark:bg-zinc-800 px-2 py-0.5 rounded-full">
+                          {selectedFile.type} preview unavailable
                         </span>
                       </div>
                     )}
@@ -779,7 +811,6 @@ export default function FileManagerContent() {
                     </div>
                   </div>
 
-                  {/* Perfectly Aligned 2-Column Grid Action Buttons */}
                   <div className="grid grid-cols-2 gap-2 pt-2">
                     <Button onClick={() => handleDownload(selectedFile.name)} variant="outline" size="sm" className="w-full text-xs h-8 border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800">
                       <Download className="w-3 h-3 mr-1.5" /> Download
