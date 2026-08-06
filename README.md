@@ -56,7 +56,10 @@ https://github.com/user-attachments/assets/62401ad1-0de1-4a1b-9dd7-237d0a436469
 
 - Local network access from any device
 - Upload, download, delete, and browse files
-- Search and filter files
+- Multi-file upload
+- Folder support: create, rename, delete, and navigate directories
+- Optional password protection for folders
+- Search and filter files and folders
 - PDF and image previews
 - Live storage analytics dashboard
 - Shared text scratchpad

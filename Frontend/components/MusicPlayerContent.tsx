@@ -18,23 +18,37 @@ import {
   Clock,
   FileAudio,
   Trash2,
-  Download
+  Download,
+  Heart,
+  Search,
+  History,
+  Sparkles
 } from "lucide-react"
 
 import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Slider } from "@/components/ui/slider"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { Separator } from "@/components/ui/separator"
+import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs"
 
 const API_BASE = typeof window !== "undefined"
   ? `http://${window.location.hostname}:5000/api`
   : "http://localhost:5000/api"
 
+const MUSIC_DIR = "Musics"
+const LS_FAVORITES = "rkhs-music-favorites"
+const LS_RECENT = "rkhs-music-recent"
+const MAX_RECENT = 30
+
+type PlaylistTab = "all" | "favorites" | "recent" | "added"
+
 interface AudioFile {
   id: string
   name: string
+  path: string
   size: string
   sizeBytes?: number
   type: "audio"
@@ -49,6 +63,56 @@ function formatTime(seconds: number) {
   return `${m}:${s.toString().padStart(2, "0")}`
 }
 
+function fileKey(file: AudioFile) {
+  return file.path || file.name
+}
+
+function loadSet(key: string): Set<string> {
+  if (typeof window === "undefined") return new Set()
+  try {
+    const raw = window.localStorage.getItem(key)
+    if (raw) {
+      const parsed = JSON.parse(raw)
+      if (Array.isArray(parsed)) return new Set(parsed)
+    }
+  } catch {
+    // ignore
+  }
+  return new Set()
+}
+
+function saveSet(key: string, value: Set<string>) {
+  if (typeof window === "undefined") return
+  try {
+    window.localStorage.setItem(key, JSON.stringify(Array.from(value)))
+  } catch {
+    // ignore
+  }
+}
+
+function loadList(key: string): string[] {
+  if (typeof window === "undefined") return []
+  try {
+    const raw = window.localStorage.getItem(key)
+    if (raw) {
+      const parsed = JSON.parse(raw)
+      if (Array.isArray(parsed)) return parsed
+    }
+  } catch {
+    // ignore
+  }
+  return []
+}
+
+function saveList(key: string, value: string[]) {
+  if (typeof window === "undefined") return
+  try {
+    window.localStorage.setItem(key, JSON.stringify(value.slice(0, MAX_RECENT)))
+  } catch {
+    // ignore
+  }
+}
+
 export default function MusicPlayerContent() {
   const [files, setFiles] = useState<AudioFile[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -61,6 +125,10 @@ export default function MusicPlayerContent() {
   const [currentTime, setCurrentTime] = useState(0)
   const [duration, setDuration] = useState(0)
   const [audioError, setAudioError] = useState<string | null>(null)
+  const [searchQuery, setSearchQuery] = useState("")
+  const [activeTab, setActiveTab] = useState<PlaylistTab>("all")
+  const [favorites, setFavorites] = useState<Set<string>>(() => loadSet(LS_FAVORITES))
+  const [recentKeys, setRecentKeys] = useState<string[]>(() => loadList(LS_RECENT))
 
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
@@ -78,17 +146,17 @@ export default function MusicPlayerContent() {
   useEffect(() => { currentTimeRef.current = currentTime }, [currentTime])
   useEffect(() => { durationRef.current = duration }, [duration])
 
-  // Load audio files on mount
+  // Load audio files from the Musics directory
   useEffect(() => {
     let cancelled = false
 
     const load = async () => {
       try {
         setIsLoading(true)
-        const res = await fetch(`${API_BASE}/files`)
+        const res = await fetch(`${API_BASE}/files?path=${encodeURIComponent(MUSIC_DIR)}`)
         const data = await res.json()
         if (cancelled) return
-        const audioFiles = data.filter((f: AudioFile) => f.type === "audio")
+        const audioFiles = (data.items || []).filter((f: AudioFile) => f.type === "audio")
         setFiles((prev) => (prev.length === 0 ? audioFiles : prev))
         if (audioFiles.length > 0) {
           setCurrentIndex((prev) => (prev === -1 ? 0 : prev))
@@ -109,17 +177,15 @@ export default function MusicPlayerContent() {
 
   const audioUrl = useMemo(() => {
     if (!currentTrack) return undefined
-    return `${API_BASE}/download/${encodeURIComponent(currentTrack.name)}`
+    return `${API_BASE}/download?path=${encodeURIComponent(currentTrack.path)}`
   }, [currentTrack])
 
-  // Ensure CORS is set on the audio element before the new source loads
   useEffect(() => {
     if (audioRef.current) {
       audioRef.current.crossOrigin = "anonymous"
     }
   }, [audioUrl])
 
-  // Initialize Web Audio API visualizer
   const initAudioContext = useCallback(() => {
     if (!audioRef.current || visualizerInitializedRef.current) return
 
@@ -151,7 +217,6 @@ export default function MusicPlayerContent() {
     }
   }, [])
 
-  // Circular live audio spectrum render loop
   const drawVisualizer = useCallback(() => {
     const canvas = canvasRef.current
     if (!canvas) {
@@ -176,7 +241,6 @@ export default function MusicPlayerContent() {
 
     const analyser = analyserRef.current
     if (!analyser) {
-      // Idle circular placeholder before playback starts
       ctx.beginPath()
       ctx.arc(centerX, centerY, ringRadius, 0, Math.PI * 2)
       ctx.strokeStyle = "rgba(255, 255, 255, 0.1)"
@@ -199,7 +263,6 @@ export default function MusicPlayerContent() {
     const dataArray = new Uint8Array(bufferLength)
     analyser.getByteFrequencyData(dataArray)
 
-    // Energy analysis
     let bassEnergy = 0
     let midEnergy = 0
     let trebleEnergy = 0
@@ -215,7 +278,6 @@ export default function MusicPlayerContent() {
     const midNormalized = midEnergy / (255 * midCount)
     const energyNormalized = (bassEnergy + midEnergy + trebleEnergy) / (255 * bufferLength)
 
-    // Ambient background glow reacting to bass/mids
     const bgGlow = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, maxRadius)
     bgGlow.addColorStop(0, `hsla(${175 + bassNormalized * 25}, 85%, 55%, ${0.12 + bassNormalized * 0.18})`)
     bgGlow.addColorStop(0.45, `hsla(${185 + midNormalized * 25}, 80%, 50%, ${0.05 + midNormalized * 0.08})`)
@@ -223,7 +285,6 @@ export default function MusicPlayerContent() {
     ctx.fillStyle = bgGlow
     ctx.fillRect(0, 0, width, height)
 
-    // Rotating subtle grid ring
     const gridTime = performance.now() / 2000
     ctx.save()
     ctx.translate(centerX, centerY)
@@ -240,23 +301,19 @@ export default function MusicPlayerContent() {
     ctx.stroke()
     ctx.restore()
 
-    // Draw mirrored circular spectrum bars
     const barCount = 180
     const step = (Math.PI * 2) / barCount
     const innerRadius = ringRadius
     const maxBarLength = maxRadius * 0.48
 
-    // Focus on the mid-range frequencies where the melody lives
     const freqStart = 4
     const freqEnd = 52
     const freqRange = Math.max(1, freqEnd - freqStart)
     const repeats = 3
 
     for (let i = 0; i < barCount; i++) {
-      // Tile the same frequency range 3 times around the circle
       const sectorT = (i / barCount) * repeats
       const local = sectorT - Math.floor(sectorT)
-      // Mirror each sector so it is centered/symmetric
       const symT = 1 - Math.abs(local * 2 - 1)
       const dataIndex = Math.min(freqStart + Math.floor(symT * freqRange), freqEnd - 1)
       const value = dataArray[dataIndex] || 0
@@ -277,12 +334,10 @@ export default function MusicPlayerContent() {
       const xMirror = centerX + cos * mirrorR
       const yMirror = centerY + sin * mirrorR
 
-      // Cyan/teal palette
       const hue = (170 + symT * 50 + normalized * 30) % 360
       const alpha = 0.4 + normalized * 0.6
       const glowAlpha = 0.12 + normalized * 0.35
 
-      // Outer glow
       ctx.beginPath()
       ctx.moveTo(xInner, yInner)
       ctx.lineTo(xOuter, yOuter)
@@ -291,7 +346,6 @@ export default function MusicPlayerContent() {
       ctx.lineCap = "round"
       ctx.stroke()
 
-      // Main outer bar
       ctx.beginPath()
       ctx.moveTo(xInner, yInner)
       ctx.lineTo(xOuter, yOuter)
@@ -300,7 +354,6 @@ export default function MusicPlayerContent() {
       ctx.lineCap = "round"
       ctx.stroke()
 
-      // Inner mirrored bar (shorter)
       ctx.beginPath()
       ctx.moveTo(xInner, yInner)
       ctx.lineTo(xMirror, yMirror)
@@ -309,7 +362,6 @@ export default function MusicPlayerContent() {
       ctx.lineCap = "round"
       ctx.stroke()
 
-      // Bright tip dot
       if (normalized > 0.2) {
         ctx.beginPath()
         ctx.arc(xOuter, yOuter, 2 + normalized * 2.5, 0, Math.PI * 2)
@@ -318,14 +370,12 @@ export default function MusicPlayerContent() {
       }
     }
 
-    // Draw ring base
     ctx.beginPath()
     ctx.arc(centerX, centerY, innerRadius, 0, Math.PI * 2)
     ctx.strokeStyle = `hsla(${180 + energyNormalized * 40}, 70%, 55%, ${0.25 + energyNormalized * 0.25})`
     ctx.lineWidth = 3
     ctx.stroke()
 
-    // Bass shockwave rings
     const shockCount = 3
     for (let i = 0; i < shockCount; i++) {
       const r = innerRadius * (0.4 + i * 0.35) + bassNormalized * (i + 1) * 15
@@ -336,7 +386,6 @@ export default function MusicPlayerContent() {
       ctx.stroke()
     }
 
-    // Draw central bass-reactive core
     const coreRadius = innerRadius * 0.28 + bassNormalized * innerRadius * 0.22
     const coreGradient = ctx.createRadialGradient(centerX, centerY, 0, centerX, centerY, coreRadius)
     coreGradient.addColorStop(0, `hsla(${180 + bassNormalized * 40}, 95%, 80%, 0.95)`)
@@ -347,7 +396,6 @@ export default function MusicPlayerContent() {
     ctx.fillStyle = coreGradient
     ctx.fill()
 
-    // Draw playback progress ring
     const progress = durationRef.current > 0 ? currentTimeRef.current / durationRef.current : 0
     const progressAngle = -Math.PI / 2 + progress * Math.PI * 2
 
@@ -416,6 +464,13 @@ export default function MusicPlayerContent() {
     audio.crossOrigin = "anonymous"
     audio.currentTime = 0
     startPlayback()
+
+    const key = fileKey(track)
+    setRecentKeys((prev) => {
+      const next = [key, ...prev.filter((k) => k !== key)]
+      saveList(LS_RECENT, next)
+      return next
+    })
   }, [files, startPlayback])
 
   const togglePlay = useCallback(() => {
@@ -506,16 +561,16 @@ export default function MusicPlayerContent() {
     }
   }
 
-  const handleDelete = async (filename: string, e?: React.MouseEvent) => {
+  const handleDelete = async (file: AudioFile, e?: React.MouseEvent) => {
     if (e) e.stopPropagation()
     try {
-      const res = await fetch(`${API_BASE}/files/${encodeURIComponent(filename)}`, {
+      const res = await fetch(`${API_BASE}/files?path=${encodeURIComponent(file.path)}`, {
         method: "DELETE",
       })
       if (res.ok) {
-        const newFiles = files.filter((f) => f.name !== filename)
+        const newFiles = files.filter((f) => f.path !== file.path)
         setFiles(newFiles)
-        if (currentTrack?.name === filename) {
+        if (currentTrack?.path === file.path) {
           if (newFiles.length > 0) {
             setCurrentIndex(Math.min(currentIndex, newFiles.length - 1))
             setIsPlaying(true)
@@ -530,9 +585,9 @@ export default function MusicPlayerContent() {
     }
   }
 
-  const handleDownload = (filename: string, e?: React.MouseEvent) => {
+  const handleDownload = (file: AudioFile, e?: React.MouseEvent) => {
     if (e) e.stopPropagation()
-    window.open(`${API_BASE}/download/${encodeURIComponent(filename)}`, "_blank")
+    window.open(`${API_BASE}/download?path=${encodeURIComponent(file.path)}`, "_blank")
   }
 
   const toggleRepeat = () => {
@@ -543,11 +598,66 @@ export default function MusicPlayerContent() {
     })
   }
 
+  const toggleFavorite = useCallback((file: AudioFile, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation()
+    const key = fileKey(file)
+    setFavorites((prev) => {
+      const next = new Set(prev)
+      if (next.has(key)) {
+        next.delete(key)
+      } else {
+        next.add(key)
+      }
+      saveSet(LS_FAVORITES, next)
+      return next
+    })
+  }, [])
+
   const progressPercent = duration > 0 ? (currentTime / duration) * 100 : 0
+
+  const fileMap = useMemo(() => {
+    const map = new Map<string, AudioFile>()
+    files.forEach((f) => map.set(fileKey(f), f))
+    return map
+  }, [files])
+
+  const filteredFiles = useMemo(() => {
+    let base = files
+
+    if (activeTab === "favorites") {
+      base = files.filter((f) => favorites.has(fileKey(f)))
+    } else if (activeTab === "recent") {
+      const ordered: AudioFile[] = []
+      const seen = new Set<string>()
+      recentKeys.forEach((key) => {
+        const f = fileMap.get(key)
+        if (f) {
+          ordered.push(f)
+          seen.add(key)
+        }
+      })
+      files.forEach((f) => {
+        if (!seen.has(fileKey(f))) ordered.push(f)
+      })
+      base = ordered
+    } else if (activeTab === "added") {
+      base = [...files].sort((a, b) => Number(b.updatedAt) - Number(a.updatedAt))
+    }
+
+    const q = searchQuery.trim().toLowerCase()
+    if (!q) return base
+    return base.filter((f) => f.name.toLowerCase().includes(q))
+  }, [files, activeTab, favorites, recentKeys, fileMap, searchQuery])
+
+  const tabCounts = useMemo(() => ({
+    all: files.length,
+    favorites: files.filter((f) => favorites.has(fileKey(f))).length,
+    recent: files.filter((f) => recentKeys.includes(fileKey(f))).length,
+    added: files.length
+  }), [files, favorites, recentKeys])
 
   return (
     <div className="max-w-7xl mx-auto space-y-6">
-      {/* Hidden audio element */}
       <audio
         ref={audioRef}
         src={audioUrl}
@@ -559,7 +669,6 @@ export default function MusicPlayerContent() {
         preload="metadata"
       />
 
-      {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
           <h2 className="text-2xl font-bold tracking-tight">Music Player</h2>
@@ -593,10 +702,8 @@ export default function MusicPlayerContent() {
         </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 items-start">
-          {/* Player Card */}
           <Card className="lg:col-span-2 border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900">
             <CardContent className="p-6 sm:p-8 flex flex-col items-center">
-              {/* Visualizer Canvas */}
               <div className="relative w-full max-w-[420px] aspect-square mb-6">
                 <canvas
                   ref={canvasRef}
@@ -605,7 +712,6 @@ export default function MusicPlayerContent() {
                   className="w-full h-full rounded-full"
                 />
 
-                {/* Center album art / placeholder */}
                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
                   <div className="w-[34%] h-[34%] rounded-full bg-gradient-to-br from-zinc-100 to-zinc-200 dark:from-zinc-800 dark:to-zinc-900 border-4 border-white/5 dark:border-white/5 shadow-2xl flex items-center justify-center overflow-hidden">
                     {currentTrack ? (
@@ -621,7 +727,6 @@ export default function MusicPlayerContent() {
                   </div>
                 </div>
 
-                {/* Playing indicator */}
                 {isPlaying && (
                   <div className="absolute top-4 right-4 flex items-center gap-1">
                     <span className="w-1 h-3 bg-emerald-500 rounded-full animate-[bounce_1s_infinite]" />
@@ -631,11 +736,29 @@ export default function MusicPlayerContent() {
                 )}
               </div>
 
-              {/* Track Info */}
               <div className="text-center mb-6 w-full">
-                <h3 className="text-lg font-semibold truncate">
-                  {currentTrack ? currentTrack.name.replace(/\.[^/.]+$/, "") : "No track selected"}
-                </h3>
+                <div className="flex items-center justify-center gap-2">
+                  <h3 className="text-lg font-semibold truncate">
+                    {currentTrack ? currentTrack.name.replace(/\.[^/.]+$/, "") : "No track selected"}
+                  </h3>
+                  {currentTrack && (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className={`h-7 w-7 ${favorites.has(fileKey(currentTrack)) ? "text-rose-500" : "text-zinc-400 hover:text-rose-500"}`}
+                          onClick={(e) => toggleFavorite(currentTrack, e)}
+                        >
+                          <Heart className={`w-4 h-4 ${favorites.has(fileKey(currentTrack)) ? "fill-current" : ""}`} />
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        {favorites.has(fileKey(currentTrack)) ? "Remove from favorites" : "Add to favorites"}
+                      </TooltipContent>
+                    </Tooltip>
+                  )}
+                </div>
                 <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
                   {currentTrack ? `${currentTrack.size} · ${currentTrack.uploader}` : "Select a track from the playlist"}
                 </p>
@@ -644,7 +767,6 @@ export default function MusicPlayerContent() {
                 )}
               </div>
 
-              {/* Progress */}
               <div className="w-full mb-5 space-y-2">
                 <Slider
                   value={[progressPercent]}
@@ -659,7 +781,6 @@ export default function MusicPlayerContent() {
                 </div>
               </div>
 
-              {/* Controls */}
               <div className="flex items-center justify-center gap-3 mb-6">
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -718,7 +839,6 @@ export default function MusicPlayerContent() {
                 </Tooltip>
               </div>
 
-              {/* Volume */}
               <div className="flex items-center gap-3 w-full max-w-xs">
                 <Button variant="ghost" size="icon" onClick={toggleMute} className="text-zinc-500 h-8 w-8">
                   {isMuted || volume === 0 ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
@@ -734,81 +854,155 @@ export default function MusicPlayerContent() {
             </CardContent>
           </Card>
 
-          {/* Playlist Card */}
           <Card className="border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 h-[calc(100vh-220px)] min-h-[480px] flex flex-col">
-            <CardHeader className="pb-3">
+            <CardHeader className="pb-3 space-y-3">
               <CardTitle className="text-sm font-medium flex items-center gap-2">
                 <ListMusic className="w-4 h-4" />
                 Playlist
               </CardTitle>
+
+              <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as PlaylistTab)} className="w-full">
+                <TabsList variant="line" className="w-full h-auto flex-wrap justify-start bg-transparent gap-0 p-0">
+                  <TabsTrigger value="all" className="text-[10px] px-2 py-1 h-7 gap-1">
+                    <ListMusic className="w-3 h-3" />
+                    All
+                    <span className="ml-0.5 inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-zinc-100 dark:bg-zinc-800 text-[9px] text-zinc-600 dark:text-zinc-400">
+                      {tabCounts.all}
+                    </span>
+                  </TabsTrigger>
+                  <TabsTrigger value="favorites" className="text-[10px] px-2 py-1 h-7 gap-1">
+                    <Heart className="w-3 h-3" />
+                    Favorites
+                    <span className="ml-0.5 inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-zinc-100 dark:bg-zinc-800 text-[9px] text-zinc-600 dark:text-zinc-400">
+                      {tabCounts.favorites}
+                    </span>
+                  </TabsTrigger>
+                  <TabsTrigger value="recent" className="text-[10px] px-2 py-1 h-7 gap-1">
+                    <History className="w-3 h-3" />
+                    Recent
+                    <span className="ml-0.5 inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-zinc-100 dark:bg-zinc-800 text-[9px] text-zinc-600 dark:text-zinc-400">
+                      {tabCounts.recent}
+                    </span>
+                  </TabsTrigger>
+                  <TabsTrigger value="added" className="text-[10px] px-2 py-1 h-7 gap-1">
+                    <Sparkles className="w-3 h-3" />
+                    New
+                    <span className="ml-0.5 inline-flex items-center justify-center min-w-[16px] h-4 px-1 rounded-full bg-zinc-100 dark:bg-zinc-800 text-[9px] text-zinc-600 dark:text-zinc-400">
+                      {tabCounts.added}
+                    </span>
+                  </TabsTrigger>
+                </TabsList>
+              </Tabs>
+
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-400" />
+                <Input
+                  placeholder="Search music..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-8 h-8 text-xs"
+                />
+              </div>
             </CardHeader>
             <CardContent className="flex-1 overflow-hidden p-0">
               <ScrollArea className="h-full px-6 pb-6">
                 <div className="space-y-1">
-                  {files.map((file, index) => {
-                    const isActive = index === currentIndex
-                    return (
-                      <div
-                        key={file.id}
-                        onClick={() => playTrack(index)}
-                        className={`group flex items-center gap-3 p-2.5 rounded-lg cursor-pointer transition-colors ${
-                          isActive
-                            ? "bg-zinc-100 dark:bg-zinc-800"
-                            : "hover:bg-zinc-50 dark:hover:bg-zinc-800/50"
-                        }`}
-                      >
-                        <div className={`w-8 h-8 rounded-md flex items-center justify-center shrink-0 ${
-                          isActive ? "bg-zinc-900 dark:bg-white text-white dark:text-zinc-900" : "bg-zinc-100 dark:bg-zinc-900 text-zinc-500"
-                        }`}>
-                          {isActive && isPlaying ? (
-                            <div className="flex items-end gap-[2px] h-3">
-                              <span className="w-[2px] h-1 bg-current rounded-full animate-[bounce_0.6s_infinite]" />
-                              <span className="w-[2px] h-2 bg-current rounded-full animate-[bounce_0.8s_infinite]" />
-                              <span className="w-[2px] h-1.5 bg-current rounded-full animate-[bounce_0.7s_infinite]" />
+                  {filteredFiles.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center py-12 text-zinc-500 text-xs gap-2">
+                      <Music className="w-8 h-8 text-zinc-300 dark:text-zinc-700" />
+                      <p className="text-center">
+                        {searchQuery
+                          ? `No tracks match "${searchQuery}"`
+                          : activeTab === "favorites"
+                            ? "No favorite tracks yet."
+                            : activeTab === "recent"
+                              ? "No recently played tracks."
+                              : "No tracks here."}
+                      </p>
+                    </div>
+                  ) : (
+                    filteredFiles.map((file) => {
+                      const index = files.findIndex((f) => f.path === file.path)
+                      const isActive = index === currentIndex
+                      const isFav = favorites.has(fileKey(file))
+                      return (
+                        <div
+                          key={file.id}
+                          onClick={() => playTrack(index >= 0 ? index : 0)}
+                          className={`group flex items-center gap-3 p-2.5 rounded-lg cursor-pointer transition-colors ${
+                            isActive
+                              ? "bg-zinc-100 dark:bg-zinc-800"
+                              : "hover:bg-zinc-50 dark:hover:bg-zinc-800/50"
+                          }`}
+                        >
+                          <div className={`w-8 h-8 rounded-md flex items-center justify-center shrink-0 ${
+                            isActive ? "bg-zinc-900 dark:bg-white text-white dark:text-zinc-900" : "bg-zinc-100 dark:bg-zinc-900 text-zinc-500"
+                          }`}>
+                            {isActive && isPlaying ? (
+                              <div className="flex items-end gap-[2px] h-3">
+                                <span className="w-[2px] h-1 bg-current rounded-full animate-[bounce_0.6s_infinite]" />
+                                <span className="w-[2px] h-2 bg-current rounded-full animate-[bounce_0.8s_infinite]" />
+                                <span className="w-[2px] h-1.5 bg-current rounded-full animate-[bounce_0.7s_infinite]" />
+                              </div>
+                            ) : (
+                              <Music className="w-4 h-4" />
+                            )}
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <p className={`text-xs font-medium truncate ${isActive ? "text-zinc-900 dark:text-zinc-100" : "text-zinc-700 dark:text-zinc-300"}`}>
+                              {file.name.replace(/\.[^/.]+$/, "")}
+                            </p>
+                            <p className="text-[10px] text-zinc-500 dark:text-zinc-400 flex items-center gap-1">
+                              <Clock className="w-3 h-3" /> {file.size}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-1 shrink-0">
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className={`h-6 w-6 ${isFav ? "text-rose-500" : "text-zinc-400 opacity-0 group-hover:opacity-100"}`}
+                                  onClick={(e) => toggleFavorite(file, e)}
+                                >
+                                  <Heart className={`w-3.5 h-3.5 ${isFav ? "fill-current" : ""}`} />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>{isFav ? "Remove from favorites" : "Add to favorites"}</TooltipContent>
+                            </Tooltip>
+                            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-6 w-6 text-zinc-500"
+                                    onClick={(e) => handleDownload(file, e)}
+                                  >
+                                    <Download className="w-3 h-3" />
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>Download</TooltipContent>
+                              </Tooltip>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-6 w-6 text-red-500"
+                                    onClick={(e) => handleDelete(file, e)}
+                                  >
+                                    <Trash2 className="w-3 h-3" />
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>Delete</TooltipContent>
+                              </Tooltip>
                             </div>
-                          ) : (
-                            <Music className="w-4 h-4" />
-                          )}
+                          </div>
                         </div>
-                        <div className="flex-1 min-w-0">
-                          <p className={`text-xs font-medium truncate ${isActive ? "text-zinc-900 dark:text-zinc-100" : "text-zinc-700 dark:text-zinc-300"}`}>
-                            {file.name.replace(/\.[^/.]+$/, "")}
-                          </p>
-                          <p className="text-[10px] text-zinc-500 dark:text-zinc-400 flex items-center gap-1">
-                            <Clock className="w-3 h-3" /> {file.size}
-                          </p>
-                        </div>
-                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-6 w-6 text-zinc-500"
-                                onClick={(e) => handleDownload(file.name, e)}
-                              >
-                                <Download className="w-3 h-3" />
-                              </Button>
-                            </TooltipTrigger>
-                            <TooltipContent>Download</TooltipContent>
-                          </Tooltip>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-6 w-6 text-red-500"
-                                onClick={(e) => handleDelete(file.name, e)}
-                              >
-                                <Trash2 className="w-3 h-3" />
-                              </Button>
-                            </TooltipTrigger>
-                            <TooltipContent>Delete</TooltipContent>
-                          </Tooltip>
-                        </div>
-                      </div>
-                    )
-                  })}
+                      )
+                    })
+                  )}
                 </div>
               </ScrollArea>
             </CardContent>
