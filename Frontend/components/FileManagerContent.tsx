@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useMemo, useEffect, useCallback } from "react"
+import { useState, useMemo, useEffect, useCallback, useRef } from "react"
 import { Document, Page, pdfjs } from "react-pdf"
 import "react-pdf/dist/Page/TextLayer.css"
 import "react-pdf/dist/Page/AnnotationLayer.css"
@@ -42,7 +42,9 @@ import {
   GripVertical,
   ChevronDown,
   Check,
-  RefreshCw
+  RefreshCw,
+  Maximize2,
+  ChevronLeft
 } from "lucide-react"
 import { Label, Pie as RechartsPie, PieChart, Sector } from "recharts"
 
@@ -139,6 +141,14 @@ export default function FileManagerContent() {
   const [searchQuery, setSearchQuery] = useState("")
   const [selectedItem, setSelectedItem] = useState<StorageItem | null>(null)
   const [aspectRatio, setAspectRatio] = useState<number>(16 / 9)
+
+  // Fullscreen preview state
+  const [fullscreenItem, setFullscreenItem] = useState<StorageItem | null>(null)
+
+  // Swipe-to-navigate state (live offset for visual feedback)
+  const [swipeOffset, setSwipeOffset] = useState(0)
+  const touchStartRef = useRef<{ x: number; y: number; time: number } | null>(null)
+  const swipeTrackingRef = useRef(false)
   const [unlockedFolders, setUnlockedFolders] = useState<Set<string>>(new Set())
   
   // Code content preview state
@@ -223,14 +233,19 @@ export default function FileManagerContent() {
       if (data.stats) {
         setStats(data.stats)
       }
-      // Mark folders without password as unlocked
-      const updatedUnlocked = new Set(unlockedFolders)
-      data.items.forEach((item: StorageItem) => {
-        if (item.type === "folder" && !item.locked) {
-          updatedUnlocked.add(item.path)
-        }
+      // Mark folders without password as unlocked.
+      // Use the functional updater so we always read the latest state and
+      // don't clobber entries added by other handlers (e.g. just-unlocked
+      // folders) in the same tick.
+      setUnlockedFolders((prev) => {
+        const updated = new Set(prev)
+        data.items.forEach((item: StorageItem) => {
+          if (item.type === "folder" && !item.locked) {
+            updated.add(item.path)
+          }
+        })
+        return updated
       })
-      setUnlockedFolders(updatedUnlocked)
       if (data.items && data.items.length > 0 && !selectedItem) {
         setSelectedItem(data.items[0])
       }
@@ -735,12 +750,17 @@ export default function FileManagerContent() {
         body: JSON.stringify({ path: folderToUnlock.path, password: unlockPassword }),
       })
       if (res.ok) {
+        const unlockedPath = folderToUnlock.path
         const updated = new Set(unlockedFolders)
-        updated.add(folderToUnlock.path)
+        updated.add(unlockedPath)
         setUnlockedFolders(updated)
         setFolderToUnlock(null)
         setUnlockPassword("")
         await fetchItems(currentPath)
+        // Navigate into the folder automatically so the user doesn't have
+        // to click it again.
+        setCurrentPath(unlockedPath)
+        setSelectedItem(null)
       } else {
         const err = await res.json()
         setUnlockError(err.error || "Unlock failed")
@@ -762,6 +782,88 @@ export default function FileManagerContent() {
     setCurrentPath(item.path)
     setSelectedItem(null)
   }
+
+  // Navigate to the previous or next non-folder item in the current view.
+  // Wraps around (cyclic) when reaching the ends.
+  const navigateAdjacentFile = useCallback((direction: "prev" | "next") => {
+    const fileItems = filteredItems.filter((i) => i.type !== "folder")
+    if (fileItems.length === 0) return
+    const baseItem = fullscreenItem ?? selectedItem
+    const currentIndex = baseItem
+      ? fileItems.findIndex((i) => i.id === baseItem.id)
+      : -1
+    let newIndex: number
+    if (currentIndex === -1) {
+      newIndex = direction === "next" ? 0 : fileItems.length - 1
+    } else if (direction === "next") {
+      newIndex = (currentIndex + 1) % fileItems.length
+    } else {
+      newIndex = (currentIndex - 1 + fileItems.length) % fileItems.length
+    }
+    const next = fileItems[newIndex]
+    if (fullscreenItem) {
+      setFullscreenItem(next)
+      // Also keep selectedItem in sync so when the user closes fullscreen,
+      // the right-side preview shows the file they were last looking at.
+      setSelectedItem(next)
+      setAspectRatio(16 / 9)
+    } else {
+      setSelectedItem(next)
+    }
+  }, [filteredItems, selectedItem, fullscreenItem])
+
+  // Swipe gesture handlers. Attach these to a wrapper around the preview area
+  // (NOT the whole card) so swipes don't fight with scrolling the metadata.
+  // direction: drag-left = "next", drag-right = "prev". Cyclic.
+  const handleSwipeStart = useCallback((e: React.TouchEvent) => {
+    if (e.touches.length !== 1) return
+    const t = e.touches[0]
+    touchStartRef.current = { x: t.clientX, y: t.clientY, time: Date.now() }
+    swipeTrackingRef.current = false
+  }, [])
+
+  const handleSwipeMove = useCallback((e: React.TouchEvent) => {
+    const start = touchStartRef.current
+    if (!start) return
+    const t = e.touches[0]
+    const dx = t.clientX - start.x
+    const dy = t.clientY - start.y
+    // Only commit to horizontal swipe once horizontal motion clearly dominates
+    if (!swipeTrackingRef.current) {
+      if (Math.abs(dx) < 8) return
+      if (Math.abs(dx) < Math.abs(dy) * 1.2) {
+        // Looks like a vertical scroll, abandon.
+        touchStartRef.current = null
+        return
+      }
+      swipeTrackingRef.current = true
+    }
+    // Damp the offset so the preview doesn't fly off-screen on big drags.
+    const damped = Math.sign(dx) * Math.min(Math.abs(dx), 140)
+    setSwipeOffset(damped)
+  }, [])
+
+  const handleSwipeEnd = useCallback((e: React.TouchEvent) => {
+    const start = touchStartRef.current
+    touchStartRef.current = null
+    if (!start || !swipeTrackingRef.current) {
+      swipeTrackingRef.current = false
+      setSwipeOffset(0)
+      return
+    }
+    swipeTrackingRef.current = false
+    const t = e.changedTouches[0]
+    const dx = t.clientX - start.x
+    const elapsed = Date.now() - start.time
+    const THRESHOLD = 60
+    const VELOCITY_THRESHOLD = 0.4 // px/ms
+    const velocity = Math.abs(dx) / Math.max(elapsed, 1)
+    const passed = Math.abs(dx) > THRESHOLD || velocity > VELOCITY_THRESHOLD
+    if (passed) {
+      navigateAdjacentFile(dx < 0 ? "next" : "prev")
+    }
+    setSwipeOffset(0)
+  }, [navigateAdjacentFile])
 
   const navigateUp = () => {
     if (!currentPath) return
@@ -1370,9 +1472,9 @@ export default function FileManagerContent() {
                 </div>
               )}
             </CardHeader>
-            <CardContent>
+            <CardContent className="p-0 sm:p-6 [&_[data-slot=table-container]]:max-h-[60vh] [&_[data-slot=table-container]]:overflow-y-auto md:[&_[data-slot=table-container]]:max-h-none md:[&_[data-slot=table-container]]:overflow-y-visible">
               <Table>
-                <TableHeader>
+                <TableHeader className="sticky top-0 z-10 bg-white dark:bg-zinc-900 shadow-[0_1px_0_0_rgb(228_228_231)] dark:shadow-[0_1px_0_0_rgb(39_39_42)]">
                   <TableRow className="border-zinc-200 dark:border-zinc-800 hover:bg-transparent">
                     <TableHead className="w-10">
                       <Checkbox
@@ -1534,11 +1636,22 @@ export default function FileManagerContent() {
             <CardContent className="space-y-4">
               {selectedItem && selectedItem.type !== "folder" ? (
                 <>
-                  <div 
-                    className="w-full bg-zinc-50 dark:bg-zinc-950 rounded-lg border border-zinc-200 dark:border-zinc-800 flex flex-col items-center justify-center overflow-hidden relative transition-all duration-300"
-                    style={{ aspectRatio: `${previewAspectRatio}` }}
+                  <div
+                    className="relative"
+                    onTouchStart={handleSwipeStart}
+                    onTouchMove={handleSwipeMove}
+                    onTouchEnd={handleSwipeEnd}
+                    onTouchCancel={handleSwipeEnd}
                   >
-                    {selectedItem.type === "image" ? (
+                    <div
+                      className="w-full bg-zinc-50 dark:bg-zinc-950 rounded-lg border border-zinc-200 dark:border-zinc-800 flex flex-col items-center justify-center overflow-hidden relative touch-pan-y select-none"
+                      style={{
+                        aspectRatio: `${previewAspectRatio}`,
+                        transform: `translateX(${swipeOffset}px)`,
+                        transition: swipeOffset === 0 ? "transform 250ms ease-out" : "none",
+                      }}
+                    >
+                      {selectedItem.type === "image" ? (
                       <img 
                         src={`${API_BASE}/download?path=${encodeURIComponent(selectedItem.path)}`} 
                         alt={selectedItem.name} 
@@ -1630,6 +1743,40 @@ export default function FileManagerContent() {
                     )}
                   </div>
 
+                    {/* Fullscreen button (only for image/video) */}
+                    {(selectedItem.type === "image" || selectedItem.type === "video") && (
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={(e) => { e.stopPropagation(); setFullscreenItem(selectedItem) }}
+                        onTouchStart={(e) => e.stopPropagation()}
+                        onMouseDown={(e) => e.stopPropagation()}
+                        className="absolute top-2 right-2 z-10 h-8 w-8 bg-black/50 hover:bg-black/70 text-white rounded-md backdrop-blur-sm"
+                        title="View fullscreen"
+                      >
+                        <Maximize2 className="w-4 h-4" />
+                      </Button>
+                    )}
+
+                    {/* Swipe direction hints (only visible during drag) */}
+                    {swipeOffset < -8 && (
+                      <div
+                        className="absolute top-1/2 -translate-y-1/2 right-3 z-20 pointer-events-none bg-zinc-900/70 rounded-full p-1.5 backdrop-blur-sm"
+                        style={{ opacity: Math.min(Math.abs(swipeOffset) / 80, 0.9) }}
+                      >
+                        <ChevronLeft className="w-5 h-5 text-white" />
+                      </div>
+                    )}
+                    {swipeOffset > 8 && (
+                      <div
+                        className="absolute top-1/2 -translate-y-1/2 left-3 z-20 pointer-events-none bg-zinc-900/70 rounded-full p-1.5 backdrop-blur-sm"
+                        style={{ opacity: Math.min(Math.abs(swipeOffset) / 80, 0.9) }}
+                      >
+                        <ChevronRight className="w-5 h-5 text-white" />
+                      </div>
+                    )}
+                  </div>
+
                   <div className="space-y-2.5 text-xs">
                     <div className="flex justify-between py-1 border-b border-zinc-100 dark:border-zinc-800/60">
                       <span className="text-zinc-400">File Name:</span>
@@ -1685,6 +1832,112 @@ export default function FileManagerContent() {
         </div>
 
       </div>
+
+      {/* Fullscreen Preview Dialog (image/video) */}
+      <Dialog open={!!fullscreenItem} onOpenChange={(open) => {
+        if (!open) {
+          setFullscreenItem(null)
+          setSwipeOffset(0)
+        }
+      }}>
+        <DialogContent
+          showCloseButton={false}
+          className="w-screen h-screen max-w-none sm:max-w-none sm:rounded-none bg-black border-zinc-800 p-0 flex flex-col gap-0 overflow-hidden"
+        >
+          <div className="flex items-center justify-between gap-2 p-3 sm:p-4 text-white shrink-0">
+            <div className="flex flex-col min-w-0 flex-1">
+              <span className="text-sm font-medium truncate">{fullscreenItem?.name}</span>
+              {fullscreenItem && (() => {
+                const fileItems = filteredItems.filter((i) => i.type !== "folder")
+                const idx = fileItems.findIndex((i) => i.id === fullscreenItem.id)
+                return idx >= 0 ? (
+                  <span className="text-[10px] text-zinc-400">{idx + 1} of {fileItems.length}</span>
+                ) : null
+              })()}
+            </div>
+            <div className="flex items-center gap-1">
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => navigateAdjacentFile("prev")}
+                className="h-9 w-9 text-white hover:bg-white/10"
+                title="Previous (swipe right)"
+              >
+                <ChevronLeft className="w-5 h-5" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => navigateAdjacentFile("next")}
+                className="h-9 w-9 text-white hover:bg-white/10"
+                title="Next (swipe left)"
+              >
+                <ChevronRight className="w-5 h-5" />
+              </Button>
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => setFullscreenItem(null)}
+                className="h-9 w-9 text-white hover:bg-white/10"
+                title="Close (Esc)"
+              >
+                <X className="w-5 h-5" />
+              </Button>
+            </div>
+          </div>
+          <div
+            className="flex-1 flex items-center justify-center overflow-hidden relative min-h-0"
+            onTouchStart={handleSwipeStart}
+            onTouchMove={handleSwipeMove}
+            onTouchEnd={handleSwipeEnd}
+            onTouchCancel={handleSwipeEnd}
+          >
+            {fullscreenItem && (
+              <div
+                className="w-full h-full flex items-center justify-center touch-pan-y select-none"
+                style={{
+                  transform: `translateX(${swipeOffset}px)`,
+                  transition: swipeOffset === 0 ? "transform 250ms ease-out" : "none",
+                }}
+              >
+                {fullscreenItem.type === "image" ? (
+                  <img
+                    src={`${API_BASE}/download?path=${encodeURIComponent(fullscreenItem.path)}`}
+                    alt={fullscreenItem.name}
+                    className="max-w-full max-h-full object-contain"
+                  />
+                ) : fullscreenItem.type === "video" ? (
+                  <video
+                    key={fullscreenItem.id}
+                    src={`${API_BASE}/download?path=${encodeURIComponent(fullscreenItem.path)}`}
+                    controls
+                    autoPlay
+                    className="max-w-full max-h-full object-contain"
+                  />
+                ) : null}
+              </div>
+            )}
+
+            {/* Swipe direction hints in fullscreen */}
+            {swipeOffset < -8 && (
+              <div
+                className="absolute top-1/2 -translate-y-1/2 right-6 z-20 pointer-events-none bg-zinc-900/70 rounded-full p-2 backdrop-blur-sm"
+                style={{ opacity: Math.min(Math.abs(swipeOffset) / 80, 0.9) }}
+              >
+                <ChevronLeft className="w-6 h-6 text-white" />
+              </div>
+            )}
+            {swipeOffset > 8 && (
+              <div
+                className="absolute top-1/2 -translate-y-1/2 left-6 z-20 pointer-events-none bg-zinc-900/70 rounded-full p-2 backdrop-blur-sm"
+                style={{ opacity: Math.min(Math.abs(swipeOffset) / 80, 0.9) }}
+              >
+                <ChevronRight className="w-6 h-6 text-white" />
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Rename Folder Dialog */}
       <Dialog open={!!folderToRename} onOpenChange={(open) => !open && setFolderToRename(null)}>
