@@ -1,4 +1,4 @@
-# RKHS Local Storage & File Manager
+# RKHS - Home Server
 <p align="center">
   <img src="Assets/1.png" alt="RKHS Local Storage & File Manager" />
   <img src="Assets/3.png" alt="RKHS Local Audio Player" />
