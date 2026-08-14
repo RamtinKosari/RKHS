@@ -1,24 +1,12 @@
 "use client"
 
-import { useState, useMemo, useEffect, useCallback, useRef } from "react"
-import { Document, Page, pdfjs } from "react-pdf"
-import "react-pdf/dist/Page/TextLayer.css"
-import "react-pdf/dist/Page/AnnotationLayer.css"
+import { useState, useMemo, useEffect, useCallback } from "react"
+import dynamic from "next/dynamic"
 
-import { 
-  Upload, 
-  File, 
-  Download, 
-  Trash2, 
-  MoreVertical, 
-  HardDrive, 
+import {
+  Upload,
+  HardDrive,
   Search,
-  FileText,
-  FileCode,
-  FileSpreadsheet,
-  FileImage,
-  FileVideo,
-  Music,
   CheckCircle2,
   Laptop,
   Wifi,
@@ -27,108 +15,76 @@ import {
   FolderOpen,
   FolderInput,
   Lock,
-  Unlock,
   ArrowLeft,
   Home,
   Plus,
   Edit3,
-  KeyRound,
   X,
   ChevronRight,
   AlertTriangle,
   Copy,
   Scissors,
   ClipboardPaste,
-  GripVertical,
   ChevronDown,
   Check,
   RefreshCw,
-  Maximize2,
-  ChevronLeft
+  Download,
+  Trash2,
 } from "lucide-react"
-import { Label, Pie as RechartsPie, PieChart, Sector } from "recharts"
-
-// Recharts v3 removed activeIndex/activeShape from the TypeScript typings,
-// but the runtime still supports them. Cast so the build passes.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const Pie = RechartsPie as any
-import { QRCodeSVG } from "qrcode.react"
-
-import { PieSectorDataItem } from "recharts/types/polar/Pie"
 
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { Checkbox } from "@/components/ui/checkbox"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger, DropdownMenuSeparator } from "@/components/ui/dropdown-menu"
 import { Progress } from "@/components/ui/progress"
 import { Separator } from "@/components/ui/separator"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, DialogFooter, DialogDescription } from "@/components/ui/dialog"
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select"
-import {
-  ChartConfig,
-  ChartContainer,
-  ChartStyle,
-  ChartTooltip,
-  ChartTooltipContent,
-} from "@/components/ui/chart"
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+  DialogFooter,
+  DialogDescription,
+} from "@/components/ui/dialog"
 
-pdfjs.GlobalWorkerOptions.workerSrc = new URL(
-  'pdfjs-dist/build/pdf.worker.min.mjs',
-  import.meta.url,
-).toString()
+import { ErrorBoundary } from "@/components/ErrorBoundary"
 
-type ItemType = "pdf" | "code" | "spreadsheet" | "image" | "video" | "audio" | "folder"
+import FileTable from "./file-manager/FileTable"
+import PreviewCard from "./file-manager/PreviewCard"
+import type {
+  StorageItem,
+  StatsData,
+  FolderTreeNode,
+  ClipboardItem,
+} from "@/lib/types"
 
-interface StorageItem {
-  id: string
-  name: string
-  size?: string
-  sizeBytes?: number
-  type: ItemType
-  path: string
-  uploader: string
-  updatedAt: string
-  locked?: boolean
-}
+const ChartCard = dynamic(() => import("@/components/file-manager/ChartCard"), {
+  ssr: false,
+  loading: () => (
+    <Card className="border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 flex flex-col">
+      <CardContent className="flex flex-1 items-center justify-center text-xs text-zinc-400 min-h-[180px]">
+        <Loader2 className="w-4 h-4 animate-spin mr-2" /> Loading chart...
+      </CardContent>
+    </Card>
+  ),
+})
 
-interface StatsData {
-  counts: Record<string, number>
-  sizes: Record<string, number>
-}
+const QrCodeCard = dynamic(() => import("@/components/file-manager/QrCodeCard"), {
+  ssr: false,
+  loading: () => (
+    <Card className="border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 flex flex-col items-center justify-between p-6">
+      <CardContent className="p-0 flex flex-col items-center justify-center flex-1 text-xs text-zinc-400 min-h-[180px]">
+        <Loader2 className="w-4 h-4 animate-spin mr-2" /> Loading QR...
+      </CardContent>
+    </Card>
+  ),
+})
 
-interface FolderTreeNode {
-  name: string
-  path: string
-  children: FolderTreeNode[]
-}
-
-interface ClipboardItem {
-  items: StorageItem[]
-  mode: "copy" | "cut"
-}
-
-const API_BASE = typeof window !== "undefined" 
-  ? `http://${window.location.hostname}:5000/api` 
-  : "http://localhost:5000/api"
-
-const chartConfig = {
-  value: { label: "Metric" },
-  pdf: { label: "Documents", color: "#71717a" },
-  code: { label: "Code", color: "#27272a" },
-  spreadsheet: { label: "Spreadsheets", color: "#a1a1aa" },
-  image: { label: "Images", color: "#d4d4d8" },
-  video: { label: "Videos", color: "#52525b" },
-  audio: { label: "Audio", color: "#3f3f46" },
-} satisfies ChartConfig
+const API_BASE =
+  typeof window !== "undefined"
+    ? `http://${window.location.hostname}:5000/api`
+    : "http://localhost:5000/api"
 
 export default function FileManagerContent() {
   const [items, setItems] = useState<StorageItem[]>([])
@@ -140,20 +96,7 @@ export default function FileManagerContent() {
   const [isLoading, setIsLoading] = useState(true)
   const [searchQuery, setSearchQuery] = useState("")
   const [selectedItem, setSelectedItem] = useState<StorageItem | null>(null)
-  const [aspectRatio, setAspectRatio] = useState<number>(16 / 9)
-
-  // Fullscreen preview state
-  const [fullscreenItem, setFullscreenItem] = useState<StorageItem | null>(null)
-
-  // Swipe-to-navigate state (live offset for visual feedback)
-  const [swipeOffset, setSwipeOffset] = useState(0)
-  const touchStartRef = useRef<{ x: number; y: number; time: number } | null>(null)
-  const swipeTrackingRef = useRef(false)
   const [unlockedFolders, setUnlockedFolders] = useState<Set<string>>(new Set())
-  
-  // Code content preview state
-  const [codeContent, setCodeContent] = useState<string>("")
-  const [isLoadingCode, setIsLoadingCode] = useState<boolean>(false)
 
   // Selection, clipboard, and file operations
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
@@ -178,7 +121,6 @@ export default function FileManagerContent() {
   const [isRenamingFile, setIsRenamingFile] = useState(false)
 
   const id = "pie-interactive-file-types"
-  const types = useMemo(() => ["pdf", "code", "spreadsheet", "image", "video", "audio"], [])
   const [activeType, setActiveType] = useState<string>("pdf")
 
   const [sharedText, setSharedText] = useState("")
@@ -211,18 +153,6 @@ export default function FileManagerContent() {
 
   const [itemToDelete, setItemToDelete] = useState<StorageItem | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
-
-  const getFileSizeBytes = (f: StorageItem) => {
-    if (f.sizeBytes && f.sizeBytes > 0) return f.sizeBytes
-    if (!f.size) return 0
-    const parts = f.size.split(" ")
-    const val = parseFloat(parts[0]) || 0
-    const unit = (parts[1] || "").toUpperCase()
-    if (unit.includes("GB")) return val * 1024 * 1024 * 1024
-    if (unit.includes("MB")) return val * 1024 * 1024
-    if (unit.includes("KB")) return val * 1024
-    return val 
-  }
 
   const fetchItems = async (path: string = currentPath) => {
     try {
@@ -280,27 +210,6 @@ export default function FileManagerContent() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentPath])
 
-  useEffect(() => {
-    if (selectedItem?.type !== "code") return
-    let cancelled = false
-
-    const loadCode = async () => {
-      setIsLoadingCode(true)
-      try {
-        const res = await fetch(`${API_BASE}/content?path=${encodeURIComponent(selectedItem.path)}`)
-        const data = await res.json()
-        if (!cancelled) setCodeContent(data.content || "")
-      } catch {
-        if (!cancelled) setCodeContent("Error loading code preview.")
-      } finally {
-        if (!cancelled) setIsLoadingCode(false)
-      }
-    }
-
-    loadCode()
-    return () => { cancelled = true }
-  }, [selectedItem])
-
   const handleSaveText = async () => {
     setIsSavingText(true)
     try {
@@ -321,27 +230,6 @@ export default function FileManagerContent() {
     setTextCopied(true)
     setTimeout(() => setTextCopied(false), 2000)
   }
-
-  const countData = useMemo(() => {
-    return types.map(t => ({
-      type: t,
-      value: stats.counts[t] || 0,
-      fill: `var(--color-${t})`
-    }))
-  }, [stats, types])
-
-  const sizeData = useMemo(() => {
-    return types.map(t => ({
-      type: t,
-      value: Number((stats.sizes[t] || 0).toFixed(2)),
-      fill: `var(--color-${t})`
-    }))
-  }, [stats, types])
-
-  const activeIndex = useMemo(
-    () => countData.findIndex((item) => item.type === activeType),
-    [activeType, countData]
-  )
 
   const handleRealUpload = async () => {
     if (selectedUploadFiles.length === 0) return
@@ -783,88 +671,6 @@ export default function FileManagerContent() {
     setSelectedItem(null)
   }
 
-  // Navigate to the previous or next non-folder item in the current view.
-  // Wraps around (cyclic) when reaching the ends.
-  const navigateAdjacentFile = useCallback((direction: "prev" | "next") => {
-    const fileItems = filteredItems.filter((i) => i.type !== "folder")
-    if (fileItems.length === 0) return
-    const baseItem = fullscreenItem ?? selectedItem
-    const currentIndex = baseItem
-      ? fileItems.findIndex((i) => i.id === baseItem.id)
-      : -1
-    let newIndex: number
-    if (currentIndex === -1) {
-      newIndex = direction === "next" ? 0 : fileItems.length - 1
-    } else if (direction === "next") {
-      newIndex = (currentIndex + 1) % fileItems.length
-    } else {
-      newIndex = (currentIndex - 1 + fileItems.length) % fileItems.length
-    }
-    const next = fileItems[newIndex]
-    if (fullscreenItem) {
-      setFullscreenItem(next)
-      // Also keep selectedItem in sync so when the user closes fullscreen,
-      // the right-side preview shows the file they were last looking at.
-      setSelectedItem(next)
-      setAspectRatio(16 / 9)
-    } else {
-      setSelectedItem(next)
-    }
-  }, [filteredItems, selectedItem, fullscreenItem])
-
-  // Swipe gesture handlers. Attach these to a wrapper around the preview area
-  // (NOT the whole card) so swipes don't fight with scrolling the metadata.
-  // direction: drag-left = "next", drag-right = "prev". Cyclic.
-  const handleSwipeStart = useCallback((e: React.TouchEvent) => {
-    if (e.touches.length !== 1) return
-    const t = e.touches[0]
-    touchStartRef.current = { x: t.clientX, y: t.clientY, time: Date.now() }
-    swipeTrackingRef.current = false
-  }, [])
-
-  const handleSwipeMove = useCallback((e: React.TouchEvent) => {
-    const start = touchStartRef.current
-    if (!start) return
-    const t = e.touches[0]
-    const dx = t.clientX - start.x
-    const dy = t.clientY - start.y
-    // Only commit to horizontal swipe once horizontal motion clearly dominates
-    if (!swipeTrackingRef.current) {
-      if (Math.abs(dx) < 8) return
-      if (Math.abs(dx) < Math.abs(dy) * 1.2) {
-        // Looks like a vertical scroll, abandon.
-        touchStartRef.current = null
-        return
-      }
-      swipeTrackingRef.current = true
-    }
-    // Damp the offset so the preview doesn't fly off-screen on big drags.
-    const damped = Math.sign(dx) * Math.min(Math.abs(dx), 140)
-    setSwipeOffset(damped)
-  }, [])
-
-  const handleSwipeEnd = useCallback((e: React.TouchEvent) => {
-    const start = touchStartRef.current
-    touchStartRef.current = null
-    if (!start || !swipeTrackingRef.current) {
-      swipeTrackingRef.current = false
-      setSwipeOffset(0)
-      return
-    }
-    swipeTrackingRef.current = false
-    const t = e.changedTouches[0]
-    const dx = t.clientX - start.x
-    const elapsed = Date.now() - start.time
-    const THRESHOLD = 60
-    const VELOCITY_THRESHOLD = 0.4 // px/ms
-    const velocity = Math.abs(dx) / Math.max(elapsed, 1)
-    const passed = Math.abs(dx) > THRESHOLD || velocity > VELOCITY_THRESHOLD
-    if (passed) {
-      navigateAdjacentFile(dx < 0 ? "next" : "prev")
-    }
-    setSwipeOffset(0)
-  }, [navigateAdjacentFile])
-
   const navigateUp = () => {
     if (!currentPath) return
     const parts = currentPath.split("/").filter(Boolean)
@@ -889,55 +695,6 @@ export default function FileManagerContent() {
     return result
   }, [currentPath])
 
-  const getItemIcon = (item: StorageItem) => {
-    if (item.type === "folder") {
-      if (item.locked && !unlockedFolders.has(item.path)) {
-        return <Folder className="w-4 h-4 text-amber-500" />
-      }
-      return <FolderOpen className="w-4 h-4 text-blue-500" />
-    }
-    switch (item.type) {
-      case "pdf": return <FileText className="w-4 h-4 text-zinc-900 dark:text-zinc-100" />
-      case "code": return <FileCode className="w-4 h-4 text-zinc-900 dark:text-zinc-100" />
-      case "spreadsheet": return <FileSpreadsheet className="w-4 h-4 text-zinc-900 dark:text-zinc-100" />
-      case "image": return <FileImage className="w-4 h-4 text-zinc-900 dark:text-zinc-100" />
-      case "video": return <FileVideo className="w-4 h-4 text-zinc-900 dark:text-zinc-100" />
-      case "audio": return <Music className="w-4 h-4 text-zinc-900 dark:text-zinc-100" />
-      default: return <File className="w-4 h-4 text-zinc-900 dark:text-zinc-100" />
-    }
-  }
-
-  // Colorful syntax highlighter helper for first 20 lines (non-scrollable)
-  const renderHighlightedCode = (code: string) => {
-    const lines = code.split("\n").slice(0, 20)
-    return lines.map((line, lineIdx) => {
-      const parts = line.split(/(\s+|[()[\]{},:;=+\-*/<>!&|.%]+|["'].*?["']|#.*|\/\/.*)/g)
-      return (
-        <div key={lineIdx} className="table-row font-mono text-[10px] leading-tight">
-          <span className="table-cell text-right pr-2 select-none text-zinc-600 dark:text-zinc-700 w-5">{lineIdx + 1}</span>
-          <span className="table-cell whitespace-pre">
-            {parts.map((part, i) => {
-              if (!part) return null
-              if (part.startsWith("#") || part.startsWith("//")) {
-                return <span key={i} className="text-zinc-500 italic">{part}</span>
-              }
-              if ((part.startsWith('"') && part.endsWith('"')) || (part.startsWith("'") && part.endsWith("'"))) {
-                return <span key={i} className="text-emerald-400">{part}</span>
-              }
-              if (/^(import|from|def|class|return|const|let|var|function|if|else|for|while|try|except|async|await|true|false|None|null|undefined)$/.test(part.trim())) {
-                return <span key={i} className="text-purple-400 font-semibold">{part}</span>
-              }
-              if (/^\d+(\.\d+)?$/.test(part.trim())) {
-                return <span key={i} className="text-amber-400">{part}</span>
-              }
-              return <span key={i} className="text-zinc-200">{part}</span>
-            })}
-          </span>
-        </div>
-      )
-    })
-  }
-
   const totalSizeBytes = useMemo(() => {
     return Object.values(stats.sizes).reduce((acc, v) => acc + v * 1024 * 1024, 0)
   }, [stats])
@@ -949,17 +706,6 @@ export default function FileManagerContent() {
   const fileCount = useMemo(() => {
     return Object.values(stats.counts).reduce((acc, v) => acc + v, 0)
   }, [stats])
-
-  const previewAspectRatio =
-    selectedItem?.type === "code" || selectedItem?.type === "spreadsheet" || selectedItem?.type === "audio"
-      ? 4 / 3
-      : aspectRatio
-
-  const formatDate = (ts: string) => {
-    const num = Number(ts)
-    if (!num) return "—"
-    return new Date(num * 1000).toLocaleString()
-  }
 
   function toggleExpanded(path: string) {
     setExpandedPaths(prev => {
@@ -1171,119 +917,23 @@ export default function FileManagerContent() {
             </CardContent>
           </Card>
 
-          <Card className="border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 flex flex-col">
-            <ChartStyle id={id} config={chartConfig} />
-            <CardHeader className="flex flex-row items-center space-y-0 pb-1 justify-between">
-              <div>
-                <CardTitle className="text-sm font-medium text-zinc-500 dark:text-zinc-400">Files Count & Size</CardTitle>
-              </div>
-              <Select value={activeType} onValueChange={setActiveType}>
-                <SelectTrigger
-                  className="h-6 w-[120px] rounded-md pl-2 text-[11px] bg-zinc-50 dark:bg-zinc-950 border-zinc-200 dark:border-zinc-800"
-                  aria-label="Select type"
-                >
-                  <SelectValue placeholder="Select type" />
-                </SelectTrigger>
-                <SelectContent align="end" className="rounded-xl bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800">
-                  {types.map((key) => {
-                    const config = chartConfig[key as keyof typeof chartConfig]
-                    if (!config) return null
-                    return (
-                      <SelectItem key={key} value={key} className="rounded-lg text-xs">
-                        <div className="flex items-center gap-2 text-xs">
-                          <span className="flex h-2 w-2 shrink-0 rounded-xs" style={{ backgroundColor: `var(--color-${key})` }} />
-                          {config.label}
-                        </div>
-                      </SelectItem>
-                    )
-                  })}
-                </SelectContent>
-              </Select>
-            </CardHeader>
-            <CardContent className="flex flex-1 justify-between items-center pb-2 pt-0 gap-2">
-              <div className="flex-1 text-center flex flex-col items-center">
-                <span className="text-[10px] font-medium text-zinc-400 uppercase tracking-wider block mb-1">Count</span>
-                <div className="w-full max-w-[110px] aspect-square">
-                  <ChartContainer config={chartConfig} className="mx-auto aspect-square w-full h-full">
-                    <PieChart>
-                      <ChartTooltip cursor={false} content={<ChartTooltipContent hideLabel />} />
-                      <Pie
-                        data={countData}
-                        dataKey="value"
-                        nameKey="type"
-                        innerRadius={22}
-                        outerRadius={38}
-                        strokeWidth={3}
-                        activeIndex={activeIndex >= 0 ? activeIndex : 0}
-                        activeShape={({ outerRadius = 0, ...props }: PieSectorDataItem) => (
-                          <g>
-                            <Sector {...props} outerRadius={outerRadius + 3} />
-                            <Sector {...props} outerRadius={outerRadius + 7} innerRadius={outerRadius + 4} />
-                          </g>
-                        )}
-                      >
-                        <Label
-                          content={({ viewBox }) => {
-                            if (viewBox && "cx" in viewBox && "cy" in viewBox && countData[activeIndex]) {
-                              return (
-                                <text x={viewBox.cx} y={viewBox.cy} textAnchor="middle" dominantBaseline="middle">
-                                  <tspan x={viewBox.cx} y={viewBox.cy} className="text-xs font-bold fill-zinc-900 dark:fill-zinc-50">
-                                    {countData[activeIndex].value}
-                                  </tspan>
-                                </text>
-                              )
-                            }
-                          }}
-                        />
-                      </Pie>
-                    </PieChart>
-                  </ChartContainer>
-                </div>
-              </div>
-
-              <div className="h-20 w-[1px] bg-zinc-100 dark:bg-zinc-800 my-auto" />
-
-              <div className="flex-1 text-center flex flex-col items-center">
-                <span className="text-[10px] font-medium text-zinc-400 uppercase tracking-wider block mb-1">Size (MB)</span>
-                <div className="w-full max-w-[110px] aspect-square">
-                  <ChartContainer config={chartConfig} className="mx-auto aspect-square w-full h-full">
-                    <PieChart>
-                      <ChartTooltip cursor={false} content={<ChartTooltipContent hideLabel />} />
-                      <Pie
-                        data={sizeData}
-                        dataKey="value"
-                        nameKey="type"
-                        innerRadius={22}
-                        outerRadius={38}
-                        strokeWidth={3}
-                        activeIndex={activeIndex >= 0 ? activeIndex : 0}
-                        activeShape={({ outerRadius = 0, ...props }: PieSectorDataItem) => (
-                          <g>
-                            <Sector {...props} outerRadius={outerRadius + 3} />
-                            <Sector {...props} outerRadius={outerRadius + 7} innerRadius={outerRadius + 4} />
-                          </g>
-                        )}
-                      >
-                        <Label
-                          content={({ viewBox }) => {
-                            if (viewBox && "cx" in viewBox && "cy" in viewBox && sizeData[activeIndex]) {
-                              return (
-                                <text x={viewBox.cx} y={viewBox.cy} textAnchor="middle" dominantBaseline="middle">
-                                  <tspan x={viewBox.cx} y={viewBox.cy} className="text-xs font-bold fill-zinc-900 dark:fill-zinc-50">
-                                    {sizeData[activeIndex].value}m
-                                  </tspan>
-                                </text>
-                              )
-                            }
-                          }}
-                        />
-                      </Pie>
-                    </PieChart>
-                  </ChartContainer>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
+          <ErrorBoundary
+            fallback={
+              <Card className="border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 flex flex-col">
+                <CardContent className="flex flex-1 items-center justify-center text-xs text-zinc-400 min-h-[180px]">
+                  Chart unavailable.
+                </CardContent>
+              </Card>
+            }
+          >
+            <ChartCard
+              id={id}
+              activeType={activeType}
+              onActiveTypeChange={setActiveType}
+              counts={stats.counts}
+              sizes={stats.sizes}
+            />
+          </ErrorBoundary>
         </div>
 
         {/* Cross-Device Temp Clipboard & Larger Dynamic QR Code Section */}
@@ -1323,25 +973,17 @@ export default function FileManagerContent() {
             </CardContent>
           </Card>
 
-          <Card className="border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 flex flex-col items-center justify-between p-6">
-            <CardHeader className="p-0 pb-3 w-full">
-              <CardTitle className="text-sm font-medium text-zinc-500 dark:text-zinc-400 text-center">
-                Instant QR Code
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="p-0 flex flex-col items-center justify-center flex-1">
-              {sharedText ? (
-                <div className="bg-white p-3.5 rounded-lg border border-zinc-200 shadow-xs">
-                  <QRCodeSVG value={sharedText} size={140} level="M" />
-                </div>
-              ) : (
-                <div className="w-[140px] h-[140px] bg-zinc-50 dark:bg-zinc-950 border border-dashed border-zinc-200 dark:border-zinc-800 rounded-lg flex items-center justify-center text-[10px] text-zinc-400 text-center p-2">
-                  Type text to generate QR
-                </div>
-              )}
-              <span className="text-[10px] text-zinc-400 mt-2.5 text-center">Scan with phone camera</span>
-            </CardContent>
-          </Card>
+          <ErrorBoundary
+            fallback={
+              <Card className="border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 flex flex-col items-center justify-between p-6">
+                <CardContent className="p-0 flex flex-col items-center justify-center flex-1 text-xs text-zinc-400 min-h-[180px]">
+                  QR code unavailable.
+                </CardContent>
+              </Card>
+            }
+          >
+            <QrCodeCard text={sharedText} />
+          </ErrorBoundary>
         </div>
 
         {/* Main Section: Table on Left & Preview Card on Right */}
@@ -1473,471 +1115,46 @@ export default function FileManagerContent() {
               )}
             </CardHeader>
             <CardContent className="p-0 sm:p-6 [&_[data-slot=table-container]]:max-h-[60vh] [&_[data-slot=table-container]]:overflow-y-auto md:[&_[data-slot=table-container]]:max-h-none md:[&_[data-slot=table-container]]:overflow-y-visible">
-              <Table>
-                <TableHeader className="sticky top-0 z-10 bg-white dark:bg-zinc-900 shadow-[0_1px_0_0_rgb(228_228_231)] dark:shadow-[0_1px_0_0_rgb(39_39_42)]">
-                  <TableRow className="border-zinc-200 dark:border-zinc-800 hover:bg-transparent">
-                    <TableHead className="w-10">
-                      <Checkbox
-                        checked={filteredItems.length > 0 && selectedIds.size === filteredItems.length}
-                        onCheckedChange={selectAll}
-                        aria-label="Select all"
-                      />
-                    </TableHead>
-                    <TableHead className="w-[40%]">Name</TableHead>
-                    <TableHead>Size</TableHead>
-                    <TableHead>Uploader</TableHead>
-                    <TableHead className="text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {isLoading ? (
-                    <TableRow>
-                      <TableCell colSpan={5} className="text-center py-12 text-zinc-500">
-                        <Loader2 className="w-5 h-5 animate-spin mx-auto mb-2" /> Connecting to Flask server...
-                      </TableCell>
-                    </TableRow>
-                  ) : filteredItems.length === 0 ? (
-                    <TableRow>
-                      <TableCell colSpan={5} className="text-center py-8 text-zinc-500">
-                        No files or folders found in this directory.
-                      </TableCell>
-                    </TableRow>
-                  ) : (
-                    filteredItems.map((item) => (
-                      <TableRow 
-                        key={item.id} 
-                        draggable
-                        onDragStart={(e) => handleDragStart(e, item)}
-                        onContextMenu={(e) => handleContextMenu(e, item)}
-                        onClick={(e) => {
-                          if (e.ctrlKey || e.metaKey) {
-                            e.preventDefault()
-                            toggleSelection(item)
-                            return
-                          }
-                          if (e.shiftKey) {
-                            e.preventDefault()
-                            toggleSelection(item, true)
-                            return
-                          }
-                          if (item.type === "folder") {
-                            navigateToFolder(item)
-                          } else {
-                            setSelectedItem(item)
-                          }
-                        }}
-                        onDrop={item.type === "folder" ? (e) => handleDropOnFolder(e, item) : undefined}
-                        onDragOver={item.type === "folder" ? handleDragOver : undefined}
-                        className={`border-zinc-200 dark:border-zinc-800 cursor-pointer transition-colors ${selectedItem?.id === item.id ? 'bg-zinc-100/80 dark:bg-zinc-800/60' : 'hover:bg-zinc-50/50 dark:hover:bg-zinc-800/30'} ${item.type === "folder" ? 'droppable-folder' : ''}`}
-                      >
-                        <TableCell className="w-10" onClick={(e) => e.stopPropagation()}>
-                          <Checkbox
-                            checked={selectedIds.has(item.id)}
-                            onCheckedChange={() => toggleSelection(item)}
-                            aria-label={`Select ${item.name}`}
-                          />
-                        </TableCell>
-                        <TableCell className="font-medium flex items-center gap-3">
-                          <GripVertical className="w-3 h-3 text-zinc-400 cursor-grab active:cursor-grabbing" />
-                          {getItemIcon(item)}
-                          <span className="truncate max-w-[180px]">{item.name}</span>
-                          {item.type === "folder" && item.locked && !unlockedFolders.has(item.path) && (
-                            <Lock className="w-3 h-3 text-amber-500" />
-                          )}
-                        </TableCell>
-                        <TableCell className="text-zinc-500 dark:text-zinc-400 text-xs">
-                          {item.type === "folder" ? "—" : item.size}
-                        </TableCell>
-                        <TableCell>
-                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-zinc-100 dark:bg-zinc-800 text-zinc-800 dark:text-zinc-200">
-                            {item.uploader}
-                          </span>
-                        </TableCell>
-                        <TableCell className="text-right">
-                          <DropdownMenu>
-                            <DropdownMenuTrigger asChild onClick={(e) => e.stopPropagation()}>
-                              <Button variant="ghost" size="icon" className="h-8 w-8">
-                                <MoreVertical className="w-4 h-4" />
-                              </Button>
-                            </DropdownMenuTrigger>
-                            <DropdownMenuContent align="end" className="border-zinc-200 dark:border-zinc-800">
-                              {item.type === "folder" ? (
-                                <>
-                                  <DropdownMenuItem onClick={() => navigateToFolder(item)} className="cursor-pointer gap-2">
-                                    <FolderOpen className="w-4 h-4" /> Open
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem onClick={() => { setFolderToRename(item); setRenameFolderName(item.name) }} className="cursor-pointer gap-2">
-                                    <Edit3 className="w-4 h-4" /> Rename
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem onClick={() => openMoveDialog([item])} className="cursor-pointer gap-2">
-                                    <FolderInput className="w-4 h-4" /> Move to...
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem onClick={() => handleCopyToClipboard([item], "copy")} className="cursor-pointer gap-2">
-                                    <Copy className="w-4 h-4" /> Copy
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem onClick={() => handleDuplicate(item)} className="cursor-pointer gap-2">
-                                    <RefreshCw className="w-4 h-4" /> Duplicate
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem onClick={() => { setFolderToPassword(item); setFolderPassword("") }} className="cursor-pointer gap-2">
-                                    <KeyRound className="w-4 h-4" /> {item.locked ? "Change Password" : "Set Password"}
-                                  </DropdownMenuItem>
-                                  {item.locked && (
-                                    <DropdownMenuItem onClick={() => handleRemoveFolderPassword(item)} className="cursor-pointer gap-2">
-                                      <Unlock className="w-4 h-4" /> Remove Password
-                                    </DropdownMenuItem>
-                                  )}
-                                  <DropdownMenuSeparator />
-                                  <DropdownMenuItem onClick={() => setItemToDelete(item)} className="cursor-pointer gap-2 text-red-600 dark:text-red-400">
-                                    <Trash2 className="w-4 h-4" /> Delete
-                                  </DropdownMenuItem>
-                                </>
-                              ) : (
-                                <>
-                                  <DropdownMenuItem onClick={() => handleDownload(item)} className="cursor-pointer gap-2">
-                                    <Download className="w-4 h-4" /> Download
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem onClick={() => { setFileToRename(item); setRenameFileName(item.name) }} className="cursor-pointer gap-2">
-                                    <Edit3 className="w-4 h-4" /> Rename
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem onClick={() => openMoveDialog([item])} className="cursor-pointer gap-2">
-                                    <FolderInput className="w-4 h-4" /> Move to...
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem onClick={() => handleCopyToClipboard([item], "copy")} className="cursor-pointer gap-2">
-                                    <Copy className="w-4 h-4" /> Copy
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem onClick={() => handleCopyToClipboard([item], "cut")} className="cursor-pointer gap-2">
-                                    <Scissors className="w-4 h-4" /> Cut
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem onClick={() => handleDuplicate(item)} className="cursor-pointer gap-2">
-                                    <RefreshCw className="w-4 h-4" /> Duplicate
-                                  </DropdownMenuItem>
-                                  <DropdownMenuSeparator />
-                                  <DropdownMenuItem onClick={() => setItemToDelete(item)} className="cursor-pointer gap-2 text-red-600 dark:text-red-400">
-                                    <Trash2 className="w-4 h-4" /> Delete
-                                  </DropdownMenuItem>
-                                </>
-                              )}
-                            </DropdownMenuContent>
-                          </DropdownMenu>
-                        </TableCell>
-                      </TableRow>
-                    ))
-                  )}
-                </TableBody>
-              </Table>
+              <FileTable
+                items={items}
+                searchQuery={searchQuery}
+                isLoading={isLoading}
+                selectedItemId={selectedItem?.id ?? null}
+                selectedIds={selectedIds}
+                unlockedFolders={unlockedFolders}
+                onSelectItem={(item) => setSelectedItem(item)}
+                onToggleSelection={toggleSelection}
+                onSelectAll={selectAll}
+                onDownload={handleDownload}
+                onDelete={(item) => setItemToDelete(item)}
+                onNavigateToFolder={navigateToFolder}
+                onRenameFile={(item) => { setFileToRename(item); setRenameFileName(item.name) }}
+                onRenameFolder={(item) => { setFolderToRename(item); setRenameFolderName(item.name) }}
+                onMoveDialog={openMoveDialog}
+                onCopyToClipboard={handleCopyToClipboard}
+                onDuplicate={handleDuplicate}
+                onSetPassword={(item) => { setFolderToPassword(item); setFolderPassword("") }}
+                onRemovePassword={handleRemoveFolderPassword}
+                onDragStart={handleDragStart}
+                onContextMenu={handleContextMenu}
+                onDropOnFolder={handleDropOnFolder}
+                onDragOver={handleDragOver}
+              />
             </CardContent>
           </Card>
 
           {/* Right: File Preview Card */}
-          <Card className="border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 sticky top-6">
-            <CardHeader className="pb-3">
-              <CardTitle className="text-sm font-medium text-zinc-500 dark:text-zinc-400">File Inspector</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {selectedItem && selectedItem.type !== "folder" ? (
-                <>
-                  <div
-                    className="relative"
-                    onTouchStart={handleSwipeStart}
-                    onTouchMove={handleSwipeMove}
-                    onTouchEnd={handleSwipeEnd}
-                    onTouchCancel={handleSwipeEnd}
-                  >
-                    <div
-                      className="w-full bg-zinc-50 dark:bg-zinc-950 rounded-lg border border-zinc-200 dark:border-zinc-800 flex flex-col items-center justify-center overflow-hidden relative touch-pan-y select-none"
-                      style={{
-                        aspectRatio: `${previewAspectRatio}`,
-                        transform: `translateX(${swipeOffset}px)`,
-                        transition: swipeOffset === 0 ? "transform 250ms ease-out" : "none",
-                      }}
-                    >
-                      {selectedItem.type === "image" ? (
-                      <img 
-                        src={`${API_BASE}/download?path=${encodeURIComponent(selectedItem.path)}`} 
-                        alt={selectedItem.name} 
-                        className="w-full h-full object-contain"
-                        onLoad={(e) => {
-                          const img = e.currentTarget
-                          if (img.naturalWidth && img.naturalHeight) {
-                            setAspectRatio(img.naturalWidth / img.naturalHeight)
-                          }
-                        }}
-                      />
-                    ) : selectedItem.type === "video" ? (
-                      <video 
-                        src={`${API_BASE}/download?path=${encodeURIComponent(selectedItem.path)}`} 
-                        controls
-                        className="w-full h-full object-contain bg-black"
-                      />
-                    ) : selectedItem.type === "audio" ? (
-                      <div className="flex flex-col items-center justify-center p-6 w-full space-y-4">
-                        <div className="p-4 bg-zinc-200/50 dark:bg-zinc-800/50 rounded-full">
-                          <Music className="w-8 h-8 text-zinc-700 dark:text-zinc-300 animate-pulse" />
-                        </div>
-                        <span className="text-xs font-semibold text-zinc-800 dark:text-zinc-200 truncate max-w-[220px]">
-                          {selectedItem.name}
-                        </span>
-                        <audio 
-                          src={`${API_BASE}/download?path=${encodeURIComponent(selectedItem.path)}`} 
-                          controls 
-                          className="w-full max-w-[260px] h-10"
-                        />
-                      </div>
-                    ) : selectedItem.type === "code" ? (
-                      <div className="w-full h-full flex flex-col bg-zinc-950 text-zinc-50 font-mono text-[10px] overflow-hidden select-text">
-                        <div className="flex items-center justify-between px-3 py-1.5 bg-zinc-900 border-b border-zinc-800 text-zinc-400 text-[10px]">
-                          <span>{selectedItem.name}</span>
-                          <span className="text-[9px] bg-zinc-800 px-1.5 py-0.5 rounded text-zinc-300">First 20 Lines</span>
-                        </div>
-                        <div className="p-2 overflow-hidden flex-1">
-                          {isLoadingCode ? (
-                            <div className="flex items-center justify-center h-full text-zinc-500">
-                              <Loader2 className="w-4 h-4 animate-spin mr-2" /> Loading code...
-                            </div>
-                          ) : (
-                            renderHighlightedCode(codeContent)
-                          )}
-                        </div>
-                      </div>
-                    ) : selectedItem.type === "pdf" ? (
-                      <div className="w-full h-full flex items-center justify-center bg-white dark:bg-zinc-900 overflow-hidden [&_canvas]:max-w-full [&_canvas]:max-h-full [&_canvas]:w-full [&_canvas]:h-auto">
-                        <Document
-                          file={`${API_BASE}/download?path=${encodeURIComponent(selectedItem.path)}`}
-                          loading={
-                            <div className="flex items-center justify-center text-xs text-zinc-400 p-4">
-                              <Loader2 className="w-4 h-4 animate-spin mr-2" /> Loading PDF...
-                            </div>
-                          }
-                          error={
-                            <div className="flex flex-col items-center justify-center p-4 text-center text-xs text-red-500">
-                              <FileText className="w-6 h-6 mb-1 opacity-60" />
-                              Failed to load PDF file.
-                            </div>
-                          }
-                        >
-                          <Page 
-                            pageNumber={1} 
-                            width={400} 
-                            renderTextLayer={false}
-                            renderAnnotationLayer={false}
-                            onLoadSuccess={(page) => {
-                              if (page.width && page.height) {
-                                setAspectRatio(page.width / page.height)
-                              }
-                            }}
-                          />
-                        </Document>
-                      </div>
-                    ) : (
-                      <div className="flex flex-col items-center justify-center p-6 text-center">
-                        <div className="p-4 bg-zinc-200/50 dark:bg-zinc-800/50 rounded-2xl mb-3 border border-zinc-300/40 dark:border-zinc-700/40 shadow-xs">
-                          {getItemIcon(selectedItem)}
-                        </div>
-                        <span className="text-xs font-semibold text-zinc-800 dark:text-zinc-200 truncate max-w-[200px]">
-                          {selectedItem.name}
-                        </span>
-                        <span className="text-[10px] text-zinc-400 mt-1 uppercase tracking-wider bg-zinc-200/60 dark:bg-zinc-800 px-2 py-0.5 rounded-full">
-                          {selectedItem.type} preview unavailable
-                        </span>
-                      </div>
-                    )}
-                  </div>
-
-                    {/* Fullscreen button (only for image/video) */}
-                    {(selectedItem.type === "image" || selectedItem.type === "video") && (
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        onClick={(e) => { e.stopPropagation(); setFullscreenItem(selectedItem) }}
-                        onTouchStart={(e) => e.stopPropagation()}
-                        onMouseDown={(e) => e.stopPropagation()}
-                        className="absolute top-2 right-2 z-10 h-8 w-8 bg-black/50 hover:bg-black/70 text-white rounded-md backdrop-blur-sm"
-                        title="View fullscreen"
-                      >
-                        <Maximize2 className="w-4 h-4" />
-                      </Button>
-                    )}
-
-                    {/* Swipe direction hints (only visible during drag) */}
-                    {swipeOffset < -8 && (
-                      <div
-                        className="absolute top-1/2 -translate-y-1/2 right-3 z-20 pointer-events-none bg-zinc-900/70 rounded-full p-1.5 backdrop-blur-sm"
-                        style={{ opacity: Math.min(Math.abs(swipeOffset) / 80, 0.9) }}
-                      >
-                        <ChevronLeft className="w-5 h-5 text-white" />
-                      </div>
-                    )}
-                    {swipeOffset > 8 && (
-                      <div
-                        className="absolute top-1/2 -translate-y-1/2 left-3 z-20 pointer-events-none bg-zinc-900/70 rounded-full p-1.5 backdrop-blur-sm"
-                        style={{ opacity: Math.min(Math.abs(swipeOffset) / 80, 0.9) }}
-                      >
-                        <ChevronRight className="w-5 h-5 text-white" />
-                      </div>
-                    )}
-                  </div>
-
-                  <div className="space-y-2.5 text-xs">
-                    <div className="flex justify-between py-1 border-b border-zinc-100 dark:border-zinc-800/60">
-                      <span className="text-zinc-400">File Name:</span>
-                      <span className="font-medium text-zinc-800 dark:text-zinc-200 truncate max-w-[180px]">{selectedItem.name}</span>
-                    </div>
-                    <div className="flex justify-between py-1 border-b border-zinc-100 dark:border-zinc-800/60">
-                      <span className="text-zinc-400">File Size:</span>
-                      <span className="font-medium text-zinc-800 dark:text-zinc-200">{selectedItem.size}</span>
-                    </div>
-                    <div className="flex justify-between py-1 border-b border-zinc-100 dark:border-zinc-800/60">
-                      <span className="text-zinc-400">Uploader:</span>
-                      <span className="font-medium text-zinc-800 dark:text-zinc-200">{selectedItem.uploader}</span>
-                    </div>
-                    <div className="flex justify-between py-1 border-b border-zinc-100 dark:border-zinc-800/60">
-                      <span className="text-zinc-400">Last Modified:</span>
-                      <span className="font-medium text-zinc-800 dark:text-zinc-200">
-                        {formatDate(selectedItem.updatedAt)}
-                      </span>
-                    </div>
-                    <div>
-                      <span className="text-zinc-400 block mb-1">Server Path:</span>
-                      <code className="text-[10px] bg-zinc-100 dark:bg-zinc-950 p-1.5 rounded block font-mono text-zinc-500 truncate">
-                        ./uploads/{selectedItem.path}
-                      </code>
-                    </div>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-2 pt-2">
-                    <Button onClick={() => handleDownload(selectedItem)} variant="outline" size="sm" className="w-full text-xs h-8 border-zinc-200 dark:border-zinc-800 hover:bg-zinc-100 dark:hover:bg-zinc-800">
-                      <Download className="w-3 h-3 mr-1.5" /> Download
-                    </Button>
-                    <Button onClick={() => setItemToDelete(selectedItem)} variant="outline" size="sm" className="w-full text-xs h-8 text-red-600 dark:text-red-400 border-zinc-200 dark:border-zinc-800 hover:bg-red-50 dark:hover:bg-red-950/30">
-                      <Trash2 className="w-3 h-3 mr-1.5" /> Delete
-                    </Button>
-                  </div>
-                </>
-              ) : (
-                <div className="text-center py-12 text-zinc-400 text-xs">
-                  {selectedItem?.type === "folder" ? (
-                    <div className="space-y-2">
-                      <Folder className="w-10 h-10 mx-auto text-blue-500" />
-                      <p className="font-medium">{selectedItem.name}</p>
-                      <p>Double-click a folder to open it.</p>
-                    </div>
-                  ) : (
-                    <p>Select a file from the table to inspect details.</p>
-                  )}
-                </div>
-              )}
-            </CardContent>
-          </Card>
+          <PreviewCard
+            selectedItem={selectedItem}
+            setSelectedItem={setSelectedItem}
+            filteredItems={filteredItems}
+            onDownload={handleDownload}
+            onDelete={(item) => setItemToDelete(item)}
+          />
 
         </div>
 
       </div>
-
-      {/* Fullscreen Preview Dialog (image/video) */}
-      <Dialog open={!!fullscreenItem} onOpenChange={(open) => {
-        if (!open) {
-          setFullscreenItem(null)
-          setSwipeOffset(0)
-        }
-      }}>
-        <DialogContent
-          showCloseButton={false}
-          className="w-screen h-screen max-w-none sm:max-w-none sm:rounded-none bg-black border-zinc-800 p-0 flex flex-col gap-0 overflow-hidden"
-        >
-          <div className="flex items-center justify-between gap-2 p-3 sm:p-4 text-white shrink-0">
-            <div className="flex flex-col min-w-0 flex-1">
-              <span className="text-sm font-medium truncate">{fullscreenItem?.name}</span>
-              {fullscreenItem && (() => {
-                const fileItems = filteredItems.filter((i) => i.type !== "folder")
-                const idx = fileItems.findIndex((i) => i.id === fullscreenItem.id)
-                return idx >= 0 ? (
-                  <span className="text-[10px] text-zinc-400">{idx + 1} of {fileItems.length}</span>
-                ) : null
-              })()}
-            </div>
-            <div className="flex items-center gap-1">
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => navigateAdjacentFile("prev")}
-                className="h-9 w-9 text-white hover:bg-white/10"
-                title="Previous (swipe right)"
-              >
-                <ChevronLeft className="w-5 h-5" />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => navigateAdjacentFile("next")}
-                className="h-9 w-9 text-white hover:bg-white/10"
-                title="Next (swipe left)"
-              >
-                <ChevronRight className="w-5 h-5" />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => setFullscreenItem(null)}
-                className="h-9 w-9 text-white hover:bg-white/10"
-                title="Close (Esc)"
-              >
-                <X className="w-5 h-5" />
-              </Button>
-            </div>
-          </div>
-          <div
-            className="flex-1 flex items-center justify-center overflow-hidden relative min-h-0"
-            onTouchStart={handleSwipeStart}
-            onTouchMove={handleSwipeMove}
-            onTouchEnd={handleSwipeEnd}
-            onTouchCancel={handleSwipeEnd}
-          >
-            {fullscreenItem && (
-              <div
-                className="w-full h-full flex items-center justify-center touch-pan-y select-none"
-                style={{
-                  transform: `translateX(${swipeOffset}px)`,
-                  transition: swipeOffset === 0 ? "transform 250ms ease-out" : "none",
-                }}
-              >
-                {fullscreenItem.type === "image" ? (
-                  <img
-                    src={`${API_BASE}/download?path=${encodeURIComponent(fullscreenItem.path)}`}
-                    alt={fullscreenItem.name}
-                    className="max-w-full max-h-full object-contain"
-                  />
-                ) : fullscreenItem.type === "video" ? (
-                  <video
-                    key={fullscreenItem.id}
-                    src={`${API_BASE}/download?path=${encodeURIComponent(fullscreenItem.path)}`}
-                    controls
-                    autoPlay
-                    className="max-w-full max-h-full object-contain"
-                  />
-                ) : null}
-              </div>
-            )}
-
-            {/* Swipe direction hints in fullscreen */}
-            {swipeOffset < -8 && (
-              <div
-                className="absolute top-1/2 -translate-y-1/2 right-6 z-20 pointer-events-none bg-zinc-900/70 rounded-full p-2 backdrop-blur-sm"
-                style={{ opacity: Math.min(Math.abs(swipeOffset) / 80, 0.9) }}
-              >
-                <ChevronLeft className="w-6 h-6 text-white" />
-              </div>
-            )}
-            {swipeOffset > 8 && (
-              <div
-                className="absolute top-1/2 -translate-y-1/2 left-6 z-20 pointer-events-none bg-zinc-900/70 rounded-full p-2 backdrop-blur-sm"
-                style={{ opacity: Math.min(Math.abs(swipeOffset) / 80, 0.9) }}
-              >
-                <ChevronRight className="w-6 h-6 text-white" />
-              </div>
-            )}
-          </div>
-        </DialogContent>
-      </Dialog>
 
       {/* Rename Folder Dialog */}
       <Dialog open={!!folderToRename} onOpenChange={(open) => !open && setFolderToRename(null)}>

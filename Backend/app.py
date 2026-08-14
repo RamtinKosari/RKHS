@@ -6,6 +6,8 @@ from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 from werkzeug.utils import secure_filename
 
+from cinema import make_blueprint as make_cinema_blueprint
+
 app = Flask(__name__)
 CORS(app)  # Enables cross-origin requests from your frontend
 
@@ -16,6 +18,14 @@ os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 app.config["UPLOAD_FOLDER"] = UPLOAD_FOLDER
 TEMP_TEXT_FILE = os.path.join(UPLOAD_FOLDER, ".temp_shared_text.txt")
 PASSWORDS_FILE = os.path.join(UPLOAD_FOLDER, ".folder_passwords.json")
+
+# Roots the Cinema tab scans (relative to UPLOAD_FOLDER).
+# All cinema content lives under `Videos/Cinema/` — categories such as
+# Movies, Series, Documentaries, etc. are subfolders of that root.
+CINEMA_ROOTS = ("Videos/Cinema",)
+app.register_blueprint(
+    make_cinema_blueprint(lambda: UPLOAD_FOLDER, lambda: CINEMA_ROOTS)
+)
 
 
 def load_passwords():

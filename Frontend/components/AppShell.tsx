@@ -1,14 +1,16 @@
 "use client"
 
 import { useState } from "react"
-import { HardDrive, Music, LayoutDashboard } from "lucide-react"
+import { HardDrive, Music, LayoutDashboard, Film } from "lucide-react"
 
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs"
+import { ErrorBoundary } from "@/components/ErrorBoundary"
 
 import FileManagerContent from "./FileManagerContent"
 import MusicPlayerContent from "./MusicPlayerContent"
+import CinemaContent from "./CinemaContent"
 
-type AppTab = "storage" | "music" | "dashboard"
+type AppTab = "storage" | "music" | "cinema" | "dashboard"
 
 export default function AppShell() {
   const [activeTab, setActiveTab] = useState<AppTab>("storage")
@@ -38,6 +40,10 @@ export default function AppShell() {
                 <Music className="w-4 h-4" />
                 <span className="hidden sm:inline">Music</span>
               </TabsTrigger>
+              <TabsTrigger value="cinema" className="gap-2 px-3 text-xs">
+                <Film className="w-4 h-4" />
+                <span className="hidden sm:inline">Cinema</span>
+              </TabsTrigger>
               <TabsTrigger value="dashboard" className="gap-2 px-3 text-xs" disabled>
                 <LayoutDashboard className="w-4 h-4" />
                 <span className="hidden sm:inline">Dashboard</span>
@@ -46,6 +52,7 @@ export default function AppShell() {
 
             <TabsContent value="storage" className="mt-0 hidden" />
             <TabsContent value="music" className="mt-0 hidden" />
+            <TabsContent value="cinema" className="mt-0 hidden" />
             <TabsContent value="dashboard" className="mt-0 hidden" />
           </Tabs>
         </div>
@@ -53,8 +60,42 @@ export default function AppShell() {
 
       {/* Main Content Area */}
       <main className="p-6 md:p-10">
-        {activeTab === "storage" && <FileManagerContent />}
-        {activeTab === "music" && <MusicPlayerContent />}
+        {activeTab === "storage" && (
+          <ErrorBoundary
+            fallback={
+              <div className="max-w-7xl mx-auto flex flex-col items-center justify-center h-[60vh] text-zinc-500 text-sm gap-2">
+                <div>The Storage tab failed to load.</div>
+                <div className="text-xs text-zinc-400">Try reloading, or open this page in a modern browser.</div>
+              </div>
+            }
+          >
+            <FileManagerContent />
+          </ErrorBoundary>
+        )}
+        {activeTab === "music" && (
+          <ErrorBoundary
+            fallback={
+              <div className="max-w-7xl mx-auto flex flex-col items-center justify-center h-[60vh] text-zinc-500 text-sm gap-2">
+                <div>The Music tab failed to load.</div>
+                <div className="text-xs text-zinc-400">Try reloading, or open this page in a modern browser.</div>
+              </div>
+            }
+          >
+            <MusicPlayerContent />
+          </ErrorBoundary>
+        )}
+        {activeTab === "cinema" && (
+          <ErrorBoundary
+            fallback={
+              <div className="max-w-7xl mx-auto flex flex-col items-center justify-center h-[60vh] text-zinc-500 text-sm gap-2">
+                <div>The Cinema tab failed to load.</div>
+                <div className="text-xs text-zinc-400">Try reloading, or open this page in a modern browser.</div>
+              </div>
+            }
+          >
+            <CinemaContent />
+          </ErrorBoundary>
+        )}
         {activeTab === "dashboard" && (
           <div className="max-w-7xl mx-auto flex items-center justify-center h-[60vh] text-zinc-500 text-sm">
             Dashboard coming soon.
